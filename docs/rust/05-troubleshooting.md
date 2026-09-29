@@ -59,6 +59,25 @@ ERROR: delimiter with start key '//!' already exists.
 Rust 面板在底部 Dock 的标签里（可能被折叠）；`rust/show_output_panel_on_error` 控制
 构建失败时是否自动展开。
 
+## rust-analyzer 报“不在模块树里”或语法错误
+
+```
+This file is not included anywhere in the module tree, so rust-analyzer can't offer IDE services.
+Syntax Error: expected SEMICOLON
+```
+
+原因有两个，都已在新版本里修掉：
+
+1. **文件没有加进 crate 根**：打开一次编辑器（或保存脚本）就会自动往 `src/lib.rs` 补
+   `mod <name>;` 与 `<name>::register();`；旧的 `lib.rs` 无需手改。
+2. **文件名/类名不是合法的 Rust 标识符**：新建脚本时类名会由文件名自动转成 PascalCase，
+   但**已经生成过**的文件仍需自己改。把结构体名改成合法类型名（例如
+   `pub struct my-script` → `pub struct MyScript`），文件名改成下划线形式
+   （`my-script.rs` → `my_script.rs`）后重新打开编辑器。
+
+判断方法：`src/lib.rs` 里应能看到 `mod my_script;`，`src/my_script.rs` 里应是
+`pub struct MyScript` 加 `godot_script::register_script!(MyScript);`。
+
 ## 脚本行为相关
 
 ### 脚本挂上去了，但运行时什么都没发生

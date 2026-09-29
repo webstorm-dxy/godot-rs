@@ -33,6 +33,9 @@ public:
 	static String get_library_path_global(const String &p_profile);
 
 	static void register_settings();
+	// Makes sure every src/*.rs module is declared (and its scripts registered)
+	// in the crate root; safe to call repeatedly and heals older projects.
+	static void sync_crate_modules();
 	static void register_editor_settings();
 	static bool handle_cmdline();
 

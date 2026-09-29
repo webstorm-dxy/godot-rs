@@ -186,6 +186,135 @@ void RustProject::register_settings() {
 	GLOBAL_DEF(PropertyInfo(Variant::BOOL, "rust/lsp/enabled"), true);
 }
 
+static bool _is_valid_rust_module_name(const String &p_name) {
+	if (p_name.is_empty()) {
+		return false;
+	}
+	if (p_name[0] >= '0' && p_name[0] <= '9') {
+		return false;
+	}
+	for (int i = 0; i < p_name.length(); i++) {
+		const char32_t c = p_name[i];
+		const bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+		if (!ok) {
+			return false;
+		}
+	}
+	static const char *const keywords[] = { "as", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return", "self", "static", "struct", "super", "trait", "true", "type", "unsafe", "use", "where", "while", nullptr };
+	for (int i = 0; keywords[i] != nullptr; i++) {
+		if (p_name == keywords[i]) {
+			return false;
+		}
+	}
+	return true;
+}
+
+void RustProject::sync_crate_modules() {
+	const String src_dir = get_crate_root_global().path_join("src");
+	const String crate_file = src_dir.path_join("lib.rs");
+	if (!FileAccess::exists(crate_file)) {
+		return;
+	}
+
+	Vector<String> modules;
+	Vector<String> scripts;
+	Ref<DirAccess> dir = DirAccess::open(src_dir);
+	if (dir.is_valid()) {
+		dir->list_dir_begin();
+		String entry = dir->get_next();
+		while (!entry.is_empty()) {
+			if (!dir->current_is_dir() && entry.get_extension().to_lower() == "rs" && entry != "lib.rs") {
+				const String stem = entry.get_basename();
+				if (_is_valid_rust_module_name(stem)) {
+					modules.push_back(stem);
+					Ref<FileAccess> module_file = FileAccess::open(src_dir.path_join(entry), FileAccess::READ);
+					if (module_file.is_valid() && module_file->get_as_utf8_string().contains("register_script!")) {
+						scripts.push_back(stem);
+					}
+				}
+			}
+			entry = dir->get_next();
+		}
+		dir->list_dir_end();
+	}
+	if (modules.is_empty()) {
+		return;
+	}
+
+	Error err;
+	Ref<FileAccess> file = FileAccess::open(crate_file, FileAccess::READ, &err);
+	if (err != OK) {
+		return;
+	}
+	Vector<String> lines;
+	while (!file->eof_reached()) {
+		lines.push_back(file->get_line());
+	}
+	file->close();
+
+	bool changed = false;
+	for (const String &module : modules) {
+		const String mod_line = "mod " + module + ";";
+		bool found = false;
+		for (const String &line : lines) {
+			if (line.strip_edges() == mod_line) {
+				found = true;
+				break;
+			}
+		}
+		if (found) {
+			continue;
+		}
+		int insert_at = 0;
+		for (int i = 0; i < lines.size(); i++) {
+			if (lines[i].begins_with("mod ")) {
+				insert_at = i + 1;
+			}
+		}
+		lines.insert(insert_at, mod_line);
+		changed = true;
+	}
+
+	for (const String &module : scripts) {
+		const String register_line = module + "::register();";
+		bool found = false;
+		for (const String &line : lines) {
+			if (line.strip_edges() == register_line) {
+				found = true;
+				break;
+			}
+		}
+		if (found) {
+			continue;
+		}
+		for (int i = 0; i < lines.size(); i++) {
+			if (!lines[i].contains("fn register_scripts()")) {
+				continue;
+			}
+			for (int j = i + 1; j < lines.size(); j++) {
+				if (lines[j].strip_edges() == "}") {
+					lines.insert(j, "\t" + register_line);
+					changed = true;
+					break;
+				}
+			}
+			break;
+		}
+	}
+
+	if (!changed) {
+		return;
+	}
+	String content;
+	for (const String &line : lines) {
+		content += line + "\n";
+	}
+	Ref<FileAccess> out = FileAccess::open(crate_file, FileAccess::WRITE, &err);
+	if (err == OK) {
+		out->store_string(content);
+	}
+}
+
 void RustProject::register_editor_settings() {
 #ifdef TOOLS_ENABLED
 	if (EditorSettings::get_singleton() == nullptr) {

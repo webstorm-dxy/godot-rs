@@ -61,9 +61,71 @@ Vector<String> RustLanguage::get_string_delimiters() const {
 	return delimiters;
 }
 
+static bool _is_valid_rust_identifier(const String &p_name) {
+	if (p_name.is_empty()) {
+		return false;
+	}
+	if (p_name[0] >= '0' && p_name[0] <= '9') {
+		return false;
+	}
+	for (int i = 0; i < p_name.length(); i++) {
+		const char32_t c = p_name[i];
+		const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+		if (!ok) {
+			return false;
+		}
+	}
+	return true;
+}
+
+static bool _is_valid_rust_module_name(const String &p_name) {
+	if (!_is_valid_rust_identifier(p_name)) {
+		return false;
+	}
+	static const char *const keywords[] = { "as", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return", "self", "static", "struct", "super", "trait", "true", "type", "unsafe", "use", "where", "while", nullptr };
+	for (int i = 0; keywords[i] != nullptr; i++) {
+		if (p_name == keywords[i]) {
+			return false;
+		}
+	}
+	return true;
+}
+
+// Turns a file base name ("my-script", "player") into a Rust type name
+// ("MyScript", "Player"); the script dialog derives the class name from the
+// file name, which is not necessarily a valid Rust identifier.
+static String _to_rust_type_name(const String &p_name) {
+	String out;
+	bool capitalize = true;
+	for (int i = 0; i < p_name.length(); i++) {
+		const char32_t c = p_name[i];
+		const bool alnum = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+		if (!alnum) {
+			capitalize = true;
+			continue;
+		}
+		out += capitalize ? String::chr(c).to_upper() : String::chr(c);
+		capitalize = false;
+	}
+	if (out.is_empty()) {
+		out = "MyScript";
+	}
+	if (out[0] >= '0' && out[0] <= '9') {
+		out = "Rust" + out;
+	}
+	if (out == "Self") {
+		out = "SelfScript";
+	}
+	return out;
+}
+
 String RustLanguage::validate_path(const String &p_path) const {
 	if (!p_path.get_extension().to_lower().is_empty() && p_path.get_extension().to_lower() != "rs") {
 		return "Rust scripts must use the .rs extension.";
+	}
+	const String stem = p_path.get_file().get_basename();
+	if (!stem.is_empty() && !_is_valid_rust_module_name(stem)) {
+		return "Rust script file names must be valid module names: lowercase letters, digits and underscores (e.g. \"my_script.rs\").";
 	}
 	return String();
 }
@@ -164,7 +226,12 @@ Ref<Script> RustLanguage::make_template(const String &p_template, const String &
 	script.instantiate();
 
 	String base = p_base_class_name.is_empty() ? String("Object") : p_base_class_name;
-	String class_name = p_class_name.is_empty() ? String("MyClass") : p_class_name;
+	if (!_is_valid_rust_identifier(base)) {
+		// The dialog passes custom types as a quoted script path; those cannot be
+		// expressed as a Rust base type, so fall back to a plain Node.
+		base = "Node";
+	}
+	const String class_name = _to_rust_type_name(p_class_name);
 
 	// Attachable-script template: the class extends `base`, so the script can be
 	// attached to any node of that type. The saver adds the `mod` declaration and
