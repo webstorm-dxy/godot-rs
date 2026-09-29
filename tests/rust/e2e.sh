@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end smoke test for the Rust module (M1 scope).
+# End-to-end smoke test for the Rust module: scaffold -> build -> run -> bindings.
 #
 # Usage: tests/rust/e2e.sh [path/to/godot-binary]
 set -uo pipefail
@@ -43,9 +43,12 @@ enabled=true
 EOF
 
 cat > "$PROJ/main.tscn" <<'EOF'
-[gd_scene format=3]
+[gd_scene load_steps=2 format=3]
 
-[node name="Player" type="Player"]
+[ext_resource type="Script" path="res://src/player.rs" id="1_player"]
+
+[node name="Player" type="Node2D"]
+script = ExtResource("1_player")
 EOF
 
 echo "== cargo build through --build-solutions"
@@ -56,7 +59,7 @@ LIB_COUNT=$(find "$PROJ/.godot/rust/target/debug" -maxdepth 1 -name 'lib*.dylib'
 echo "== run the project (expects the Rust example class to load)"
 OUTPUT=$("$BIN" --headless --path "$PROJ" --quit-after 120 2>&1)
 echo "$OUTPUT" | tail -20
-echo "$OUTPUT" | grep -q 'Rust Player ready' || fail "Rust class did not run"
+echo "$OUTPUT" | grep -q 'Player ready' || fail "Rust script did not run"
 
 echo "== regenerate bindings"
 "$BIN" --headless --editor --path "$PROJ" --rust-regenerate-bindings --quit || fail "bindings regeneration failed"

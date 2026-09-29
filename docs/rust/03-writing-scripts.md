@@ -1,7 +1,10 @@
 # 03 · 写第一个可挂载的 Rust 脚本
 
 目标：写一个 `Player` 脚本，挂到任意 `Node2D` 节点上，在检视面板里能改 `speed`，
-运行时能看到 `ready` / `process` 回调。
+运行时能收到 `ready` / `process` 回调，还能被 GDScript 调用、能发信号。
+
+脚本用两个宏写成：`#[derive(RustScript)]` 读**结构体**（字段、检视面板设置），
+`#[godot_script_api]` 读 **impl 块**（生命周期、方法、信号）。
 
 ## 1. 最小脚本
 
@@ -11,40 +14,34 @@
 use godot::prelude::*;
 use godot_script::prelude::*;
 
+#[derive(RustScript)]
+#[script(base = Node2D)]        // 能挂到 Node2D 及其子类上
 pub struct Player {
-    owner: Gd<Node2D>,
+    owner: Gd<Node2D>,          // 名字叫 owner 的字段自动拿到挂载的节点
+    #[export]                   // 显示在检视面板，并保存进场景
     speed: f32,
 }
 
-impl RustScript for Player {
-    /// 这个脚本能挂到哪些节点上：Node2D 及其子类都可以。
-    type Base = Node2D;
-
-    /// 编辑器里显示的类名。
-    const CLASS_NAME: &'static str = "Player";
-    /// 基类的引擎名字，必须和上面的 type Base 一致。
-    const BASE_NAME: &'static str = "Node2D";
-
-    /// 每个挂了该脚本的节点都会调用一次，用来初始化状态。
-    fn new(owner: Gd<Self::Base>) -> Self {
-        Self { owner, speed: 100.0 }
-    }
-
+#[godot_script_api]
+impl Player {
     fn ready(&mut self) {
         godot_print!("Player ready, speed = {}", self.speed);
     }
 
     fn process(&mut self, delta: f64) {
         let distance = self.speed as f64 * delta;
-        let _ = (&self.owner, distance);
+        let _ = distance;
     }
 }
 
 godot_script::register_script!(Player);
 ```
 
-最后一行宏做两件事：生成 `pub fn register()`（给 crate 根调用），并把这个类型注册到
-引擎的脚本注册表（同时记住它来自哪个文件）。
+规则：
+
+- `#[script(base = 引擎类名)]` 必填；类名默认就是结构体名（可用 `#[script(name = "Other")]` 改）；
+- 没有 `#[export]` 的字段是普通 Rust 字段，初始值为 `Default::default()`；
+- 最后一行宏生成 `pub fn register()`（给 crate 根调用）并把类型注册到引擎。
 
 ## 2. 让 crate 根知道它
 
@@ -62,123 +59,97 @@ pub fn register_scripts() {
 
 ## 3. 导出属性（在检视面板里编辑）
 
-属性 = 面板可见 + 存进场景文件。声明属性和读写都显式写出来：
-
 ```rust
-use godot_script::prelude::*;
+#[derive(RustScript)]
+#[script(base = Node2D)]
+pub struct Player {
+    owner: Gd<Node2D>,
 
-impl RustScript for Player {
-    // ...
-    fn properties() -> Vec<PropertyInfo> {
-        vec![
-            PropertyInfo::new_export::<f32>("speed"),
-            PropertyInfo::new_export::<GString>("display_name"),
-        ]
-    }
+    #[export]                              // 面板里可编辑、存进场景
+    speed: f32,
 
-    fn get_property(&self, name: &str) -> Option<Variant> {
-        match name {
-            "speed" => Some(self.speed.to_variant()),
-            "display_name" => Some(self.display_name.to_variant()),
-            _ => None,
-        }
-    }
+    #[export(default = 10.0)]              // 初始值不是 Default
+    height: f32,
 
-    fn set_property(&mut self, name: &str, value: &Variant) -> bool {
-        match name {
-            "speed" => {
-                self.speed = f32::from_variant(value);
-                true          // true = 我处理了这个属性
-            }
-            "display_name" => {
-                self.display_name = GString::from_variant(value);
-                true
-            }
-            _ => false,
-        }
-    }
+    #[export(default = 1.0, range = (0.0, 100.0))]   // 面板里是滑条
+    gravity: f32,
+
+    display_name: GString,                 // 不导出：只是内部字段
 }
 ```
 
-`PropertyInfo::new_export::<T>()` 用的就是 gdext 的导出规则，所以 `f32`、`bool`、
-`GString`、`Vector2`、`Gd<Node>` 等常见类型都可以直接用；复杂类型可以用
-`PropertyInfo { ... }` 手工构造（提示、范围等，和 GDScript 的 `@export_range` 类似）。
+支持的类型就是 gdext 的导出类型：`f32`、`f64`、`i64`、`bool`、`GString`、
+`Vector2`、`Gd<某个节点>` 等；要用提示/枚举等复杂设置，可以手写 `PropertyInfo`
+（见第 10 节）。
 
-场景保存后，值会在节点实例化时通过 `set_property` 回写到你的结构体里。
+场景保存时属性值会随节点一起存下来，重新打开场景时自动写回字段。
 
-## 4. 生命周期回调一览
+## 4. 生命周期回调
 
-| 回调 | 触发时机 |
+在 `#[godot_script_api]` 的 impl 块里写下面这些名字的方法即可，签名必须一致：
+
+| 方法 | 触发时机 |
 | --- | --- |
-| `new(owner)` | 节点创建脚本实例时（构造状态） |
-| `ready()` | 节点及其子节点进入场景树后 |
-| `process(delta)` | 每个渲染帧 |
-| `physics_process(delta)` | 每个物理帧 |
-| `enter_tree()` | 进入场景树 |
-| `exit_tree()` | 离开场景树 |
+| `fn ready(&mut self)` | 节点及其子节点进入场景树之后 |
+| `fn process(&mut self, delta: f64)` | 每个渲染帧 |
+| `fn physics_process(&mut self, delta: f64)` | 每个物理帧 |
+| `fn enter_tree(&mut self)` | 进入场景树 |
+| `fn exit_tree(&mut self)` | 离开场景树 |
 
 它们和 GDScript 的 `_ready` / `_process` / `_physics_process` / `_enter_tree` /
-`_exit_tree` 一一对应；引擎调用 `has_method` + `call` 时分发到这些方法。
+`_exit_tree` 一一对应；`delta` 的类型是 `f64`（秒）。
 
 ## 5. 给 GDScript / 编辑器暴露方法
 
-`methods()` 声明有哪些方法，`call_method()` 真正执行。声明之后，GDScript 里就能写
-`$Player.jump(5.0)`，编辑器的 `has_method()` / `get_method_list()` / 自动补全也会看到它们。
+给方法加 `#[func]`，GDScript 里就能 `player.call("jump", 5.0)`，编辑器的
+`has_method()` / `get_method_list()` / 自动补全也会看到它：
 
 ```rust
-impl RustScript for Player {
-    // ...
-    fn methods() -> Vec<ScriptMethod> {
-        vec![
-            ScriptMethod::new("jump")
-                .arg("height", VariantType::FLOAT)
-                .returns(VariantType::FLOAT),
-            ScriptMethod::new("reset"), // 无参数、无返回值
-        ]
+#[godot_script_api]
+impl Player {
+    #[func]
+    fn jump(&mut self, height: f32) -> f32 {
+        self.speed + height
     }
 
-    fn call_method(&mut self, name: &str, args: &[&Variant]) -> Result<Variant, CallErrorType> {
-        match name {
-            "jump" => {
-                let height = args.first().map_or(2.0, |value| f32::from_variant(value));
-                Ok((self.speed + height).to_variant())
-            }
-            "reset" => {
-                self.speed = 100.0;
-                Ok(Variant::nil())
-            }
-            // 不是自己的方法就交还给引擎，让它照常报“方法不存在”。
-            _ => Err(CallErrorType::InvalidMethod),
-        }
+    #[func]
+    fn reset(&mut self) {          // 没有返回值：GDScript 里返回 null
+        self.speed = 100.0;
+    }
+
+    #[func]
+    fn describe(&mut self) -> GString {
+        GString::from("player")
     }
 }
 ```
 
-- 参数按声明顺序从 `args` 里取：`args.first()`、`args.get(1)`；
-- 有返回值用 `Ok(value.to_variant())`，没有返回值用 `Ok(Variant::nil())`；
-- `methods()` 和 `call_method()` 的名字必须对得上，漏一个就会出现“明明写了却调不到”；
-- `.as_const()` 表示该方法可以在只读实例上调用（和 GDScript 的 `const` 方法一致）。
+GDScript 侧：
+
+```gdscript
+print(player.has_method("jump"))          # true
+print(player.call("jump", 5.0))           # 105.0
+print(player.get_method_argument_count("jump"))   # 1
+```
+
+- 参数类型会自动转换；参数个数不够或类型不对，引擎会给出调用错误；
+- 想接受“可以不传”的参数就用 `Option<T>`（不传时是 `None`）；
+- 参数名会出现在编辑器的提示里。
 
 ## 6. 声明信号
 
 ```rust
-impl RustScript for Player {
-    // ...
-    fn signals() -> Vec<ScriptSignal> {
-        vec![ScriptSignal::new("jumped").arg("height", VariantType::FLOAT)]
+#[godot_script_api]
+impl Player {
+    #[func]
+    fn do_jump(&mut self) {
+        let height = 5.0;
+        // 参数列表和 GDScript 的 emit_signal 一样
+        self.owner.clone().emit_signal("jumped", &[height.to_variant()]);
     }
 
-    fn call_method(&mut self, name: &str, args: &[&Variant]) -> Result<Variant, CallErrorType> {
-        match name {
-            "do_jump" => {
-                let height = 5.0;
-                // 参数列表和 GDScript 的 emit_signal 一样。
-                self.owner.clone().emit_signal("jumped", &[height.to_variant()]);
-                Ok(Variant::nil())
-            }
-            _ => Err(CallErrorType::InvalidMethod),
-        }
-    }
+    #[signal]
+    fn jumped(height: f32) {}      // 花括号里不写内容
 }
 ```
 
@@ -192,9 +163,23 @@ print(player.has_signal("jumped"))   # true
 
 编辑器里右侧的 **Node → Signals** 面板同样会列出它并可以连接。和 GDScript 一致：
 **没有人连接的信号，发射时不会报错，也不会有任何效果**。
-## 7. 拿到节点自己
 
-`new(owner)` 里的 `owner` 就是这个脚本挂着的节点，把它存下来即可：
+## 7. 工具脚本（编辑器里也运行）
+
+```rust
+#[derive(RustScript)]
+#[script(base = Node2D, tool)]     // tool = 编辑器里也执行
+pub struct GridPainter {
+    owner: Gd<Node2D>,
+}
+```
+
+工具脚本的 `ready` / `process` 在编辑器里也会运行，适合做编辑器辅助工具。
+注意：编辑器里的脚本实例和运行游戏时是两套，状态不共享。
+
+## 8. 拿到节点自己
+
+`owner` 字段就是挂着的节点（`Gd<Node2D>`），它只是引用，`clone()` 不会复制节点：
 
 ```rust
 fn process(&mut self, delta: f64) {
@@ -204,19 +189,8 @@ fn process(&mut self, delta: f64) {
 }
 ```
 
-`Gd<Node2D>::clone()` 只是增加引用（不会复制节点），放心用。
-
-## 8. 工具脚本（编辑器里也运行）
-
-```rust
-impl RustScript for Player {
-    const IS_TOOL: bool = true;   // 编辑器里也执行 ready/process
-    // ...
-}
-```
-
-> 当前版本工具脚本的实例化路径已打通，但编辑器内的属性刷新/撤销集成还在路线图上，
-> 见 [06-architecture.md](06-architecture.md)。
+也可以叫别的名字：字段不叫 `owner` 时，`new(owner)` 里的节点会被忽略（会有编译提示），
+需要的话在 `ready()` 里自己 `self.owner = ...` 保存。
 
 ## 9. 命名规则（很重要）
 
@@ -242,7 +216,79 @@ RustLanguage.is_valid_module_name("my-script")  # false
 `mod` 声明与注册调用不需要手写：保存脚本时、以及每次打开编辑器时，模块都会扫描 `src/*.rs`
 并补齐（注册调用仅当文件里出现 `register_script!` 时才会加），所以旧项目也会自动修好。
 
-## 10. 一个脚本一个类
+## 10. 不用派生宏：手写 impl（进阶）
+
+派生宏只是省样板。想要完全控制（属性名和字段名不同、动态生成方法表、特殊提示等），
+可以直接实现 `RustScript`：
+
+```rust
+use godot::prelude::*;
+use godot_script::prelude::*;
+
+pub struct Player {
+    owner: Gd<Node2D>,
+    speed: f32,
+}
+
+impl RustScript for Player {
+    type Base = Node2D;
+    const CLASS_NAME: &'static str = "Player";
+    const BASE_NAME: &'static str = "Node2D";
+
+    fn new(owner: Gd<Self::Base>) -> Self {
+        Self { owner, speed: 100.0 }
+    }
+
+    fn properties() -> Vec<PropertyInfo> {
+        vec![PropertyInfo::new_export::<f32>("speed")]
+    }
+
+    fn get_property(&self, name: &str) -> Option<Variant> {
+        match name {
+            "speed" => Some(self.speed.to_variant()),
+            _ => None,
+        }
+    }
+
+    fn set_property(&mut self, name: &str, value: &Variant) -> bool {
+        match name {
+            "speed" => {
+                self.speed = f32::from_variant(value);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn methods() -> Vec<ScriptMethod> {
+        vec![ScriptMethod::new("jump").arg("height", VariantType::FLOAT).returns(VariantType::FLOAT)]
+    }
+
+    fn call_method(&mut self, name: &str, args: &[&Variant]) -> Result<Variant, CallErrorType> {
+        match name {
+            "jump" => {
+                let height = args.first().map_or(2.0, |value| f32::from_variant(value));
+                Ok((self.speed + height).to_variant())
+            }
+            _ => Err(CallErrorType::InvalidMethod),
+        }
+    }
+
+    fn signals() -> Vec<ScriptSignal> {
+        vec![ScriptSignal::new("jumped").arg("height", VariantType::FLOAT)]
+    }
+
+    fn ready(&mut self) {
+        godot_print!("Player ready, speed = {}", self.speed);
+    }
+}
+
+godot_script::register_script!(Player);
+```
+
+注意：**派生宏和手写 impl 不能混用**（派生宏已经生成了整个 `impl RustScript`）。
+
+## 11. 一个脚本一个类
 
 - 一个 `.rs` 文件里放**一个** `register_script!`；
 - 一个文件里多个类时只有被注册的那个能挂载；

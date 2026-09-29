@@ -20,6 +20,7 @@ modules/rust/
 │   ├── rust_bindings.*          # 导出本引擎的 extension_api.json
 │   └── rust_editor_plugin.*     # 运行栏按钮、F5 前构建、加载扩展
 ├── support/godot-script/        # Rust 侧运行时 crate（可挂载脚本 API）
+├── support/godot-script-derive/ # 派生宏：#[derive(RustScript)] / #[godot_script_api]
 └── vendor/gdext/                # 内置的 godot-rust 0.5.5（未修改，MPL-2.0）
 ```
 
@@ -105,13 +106,14 @@ modules/rust/
 - 方法与信号：`methods()/call_method()` 可从 GDScript 调用，`signals()` 可连接、可发射；
 - 占位实例：库未构建时挂载不报错，构建后生效；
 - 描述符缓存：`.godot/rust/script_cache.json`，未构建时也能显示类名/属性/方法/信号；
+- 派生宏：`#[derive(RustScript)]`（字段、`#[export]`）+ `#[godot_script_api]`
+  （生命周期、`#[func]`、`#[signal]`），生成的代码就是下面的手写 API；
 - 内置 rust-analyzer：补全、悬停、跳转定义、实时诊断（见 [07-language-server.md](07-language-server.md)）。
 
 尚未实现（路线图）：
 
 | 项 | 说明 |
 | --- | --- |
-| `#[derive(RustScript)]` 派生宏 | 目前需手写 `impl RustScript` 的 `properties/methods/signals`；派生宏可省掉样板 |
 | RPC | `@rpc` 风格的多人同步 |
 | 工具脚本的编辑器集成 | `IS_TOOL` 已透传，属性刷新/撤销尚需打磨 |
 | 热重载 | 库重载后的类与实例状态迁移（对应计划里的 M4） |

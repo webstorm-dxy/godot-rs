@@ -767,45 +767,23 @@ pub fn register_scripts() {
 }
 )RUST";
 
+	// The generated script uses the derive macros: the struct carries the fields
+	// (and their inspector settings), the #[godot_script_api] block the behaviour.
 	const String player_rs = R"RUST(use godot::prelude::*;
 use godot_script::prelude::*;
 
 /// Example script. Attach it to any Node2D in the editor, or delete it.
+#[derive(RustScript)]
+#[script(base = Node2D)]
 pub struct Player {
     owner: Gd<Node2D>,
+    /// Shown in the inspector and saved in the scene.
+    #[export]
     speed: f32,
 }
 
-impl RustScript for Player {
-    type Base = Node2D;
-    const CLASS_NAME: &'static str = "Player";
-    const BASE_NAME: &'static str = "Node2D";
-
-    fn new(owner: Gd<Self::Base>) -> Self {
-        Self { owner, speed: 100.0 }
-    }
-
-    fn properties() -> Vec<PropertyInfo> {
-        vec![PropertyInfo::new_export::<f32>("speed")]
-    }
-
-    fn get_property(&self, name: &str) -> Option<Variant> {
-        match name {
-            "speed" => Some(self.speed.to_variant()),
-            _ => None,
-        }
-    }
-
-    fn set_property(&mut self, name: &str, value: &Variant) -> bool {
-        match name {
-            "speed" => {
-                self.speed = f32::from_variant(value);
-                true
-            }
-            _ => false,
-        }
-    }
-
+#[godot_script_api]
+impl Player {
     fn ready(&mut self) {
         godot_print!("Player ready, speed = {}", self.speed);
     }
@@ -814,6 +792,16 @@ impl RustScript for Player {
         let distance = self.speed as f64 * delta;
         let _ = (&self.owner, distance);
     }
+
+    /// Callable from GDScript: player.call("jump", 5.0).
+    #[func]
+    fn jump(&mut self, height: f32) -> f32 {
+        self.speed + height
+    }
+
+    /// Connectable from GDScript and the editor's signal dock.
+    #[signal]
+    fn jumped(height: f32) {}
 }
 
 godot_script::register_script!(Player);

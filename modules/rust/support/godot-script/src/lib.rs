@@ -69,6 +69,11 @@ use godot::obj::{EngineBitfield as _, EngineEnum as _, Gd, GodotClass, InstanceI
 use godot::register::info::{
     MethodFlags, MethodInfo, PropertyHintInfo, PropertyInfo, PropertyUsageFlags,
 };
+use godot::register::property::Var;
+
+// The derive and the attribute macro live in their own proc-macro crate; they are
+// re-exported here so a script only depends on `godot-script`.
+pub use godot_script_derive::{RustScript, godot_script_api};
 
 pub mod prelude {
     //! Everything a script file needs on top of `godot::prelude`.
@@ -76,7 +81,10 @@ pub mod prelude {
     //! Only the names that `godot::prelude` does not already export are listed,
     //! so `use godot::prelude::*;` and `use godot_script::prelude::*;` can be
     //! combined without ambiguous glob imports.
-    pub use crate::{RustScript, ScriptArgument, ScriptMethod, ScriptSignal, register_script};
+    pub use crate::{
+        RustScript, ScriptApi, ScriptArgument, ScriptMethod, ScriptSignal, call_argument,
+        godot_script_api, register_script,
+    };
     pub use godot::meta::error::CallErrorType;
     pub use godot::register::info::PropertyInfo;
 }
@@ -153,6 +161,22 @@ impl ScriptMethod {
         self
     }
 
+    /// Adds one parameter, taking its Godot type from the Rust type.
+    ///
+    /// Used by `#[func]`; `arg_of::<f32>("height")` is the same as
+    /// `arg("height", VariantType::FLOAT)`.
+    pub fn arg_of<T: Var>(mut self, name: &'static str) -> Self {
+        self.arguments
+            .push(ScriptArgument::new(name, PropertyInfo::new_var::<T>("").variant_type));
+        self
+    }
+
+    /// Sets the return type from the Rust type, as `#[func]` does.
+    pub fn returns_of<T: Var>(mut self) -> Self {
+        self.return_type = PropertyInfo::new_var::<T>("").variant_type;
+        self
+    }
+
     /// Marks the method as const.
     pub fn as_const(mut self) -> Self {
         self.is_const = true;
@@ -216,6 +240,13 @@ impl ScriptSignal {
     /// Adds one parameter.
     pub fn arg(mut self, name: &'static str, variant_type: VariantType) -> Self {
         self.arguments.push(ScriptArgument::new(name, variant_type));
+        self
+    }
+
+    /// Adds one parameter, taking its Godot type from the Rust type.
+    pub fn arg_of<T: Var>(mut self, name: &'static str) -> Self {
+        self.arguments
+            .push(ScriptArgument::new(name, PropertyInfo::new_var::<T>("").variant_type));
         self
     }
 }
@@ -299,6 +330,53 @@ pub trait RustScript: Sized + 'static {
 
     /// Called when the node leaves the scene tree.
     fn exit_tree(&mut self) {}
+}
+
+/// What `#[godot_script_api]` fills in for a `#[derive(RustScript)]` struct.
+///
+/// Only the macro implements this trait; the default implementations below make
+/// an empty script work, so a script without methods is still valid.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is missing its script API block",
+    label = "add `#[godot_script_api] impl {Self} {{ ... }}` below the struct",
+    note = "`#[derive(RustScript)]` only reads the fields; lifecycle hooks, `#[func]` methods and `#[signal]` declarations are collected from this impl block"
+)]
+pub trait ScriptApi: Sized {
+    /// Methods exposed to GDScript and the editor.
+    fn api_methods() -> Vec<ScriptMethod> {
+        Vec::new()
+    }
+
+    /// Dispatches `node.call("method", ...)` to the `#[func]` methods.
+    fn api_call(&mut self, _name: &str, _args: &[&Variant]) -> Result<Variant, CallErrorType> {
+        Err(CallErrorType::InvalidMethod)
+    }
+
+    /// Signals declared with `#[signal]`.
+    fn api_signals() -> Vec<ScriptSignal> {
+        Vec::new()
+    }
+
+    fn api_ready(&mut self) {}
+
+    fn api_process(&mut self, _delta: f64) {}
+
+    fn api_physics_process(&mut self, _delta: f64) {}
+
+    fn api_enter_tree(&mut self) {}
+
+    fn api_exit_tree(&mut self) {}
+}
+
+/// Reads argument `index` of a script call, reporting the usual call errors.
+///
+/// Used by the generated dispatch code; write it by hand in `call_method` when a
+/// method has optional arguments.
+pub fn call_argument<T: FromGodot>(args: &[&Variant], index: usize) -> Result<T, CallErrorType> {
+    let Some(value) = args.get(index) else {
+        return Err(CallErrorType::TooFewArguments);
+    };
+    T::try_from_variant(value).map_err(|_| CallErrorType::InvalidArgument)
 }
 
 /// Lifecycle method names forwarded to the user's hooks.
