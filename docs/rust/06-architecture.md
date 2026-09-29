@@ -103,13 +103,15 @@ modules/rust/
 - 创建脚本时自动维护 `src/lib.rs` 的 `mod` / `register`；
 - 可挂载脚本：类名、基类校验、`new/ready/process/physics_process/enter_tree/exit_tree`、
   `properties/get_property/set_property`（检视面板 + 场景序列化）；
-- 方法与信号：`methods()/call_method()` 可从 GDScript 调用，`signals()` 可连接、可发射；
+- 方法与信号：`methods()/call_method()` 可从 GDScript 调用（支持 `#[opt(default = ...)]`
+  默认参数），`signals()` 可连接、可发射；
 - 工具脚本：`#[script(base = X, tool)]`；和 GDScript 一样，编辑器里只实例化 tool 脚本
   （其余用占位实例，`can_instantiate()` 与 `ScriptServer::is_scripting_enabled()` 一致）；
 - 占位实例：库未构建时挂载不报错，构建后生效；
 - 描述符缓存：`.godot/rust/script_cache.json`，未构建时也能显示类名/属性/方法/信号；
-- 派生宏：`#[derive(RustScript)]`（字段、`#[export]`）+ `#[godot_script_api]`
-  （生命周期、`#[func]`、`#[signal]`），生成的代码就是下面的手写 API；
+- 派生宏：`#[derive(RustScript)]`（字段、`#[export]` 及 `range/enum/flags/file/dir/multiline`
+  等提示、`#[export(storage)]`）+ `#[godot_script_api]`（生命周期、`#[func]`、`#[signal]`），
+  生成的代码就是下面的手写 API；
 - 内置 rust-analyzer：补全、悬停、跳转定义、实时诊断（见 [07-language-server.md](07-language-server.md)）。
 
 尚未实现（路线图）：

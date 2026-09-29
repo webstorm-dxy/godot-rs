@@ -82,8 +82,8 @@ pub mod prelude {
     //! so `use godot::prelude::*;` and `use godot_script::prelude::*;` can be
     //! combined without ambiguous glob imports.
     pub use crate::{
-        RustScript, ScriptApi, ScriptArgument, ScriptMethod, ScriptSignal, call_argument,
-        godot_script_api, register_script,
+        RustScript, ScriptApi, ScriptArgument, ScriptMethod, ScriptSignal, argument_value,
+        call_argument, godot_script_api, register_script,
     };
     pub use godot::meta::error::CallErrorType;
     pub use godot::register::info::PropertyInfo;
@@ -137,6 +137,8 @@ pub struct ScriptMethod {
     pub return_type: VariantType,
     /// Const methods may be called on a read-only instance.
     pub is_const: bool,
+    /// Default values of the trailing optional parameters.
+    pub defaults: Vec<Variant>,
 }
 
 impl ScriptMethod {
@@ -146,6 +148,7 @@ impl ScriptMethod {
             arguments: Vec::new(),
             return_type: VariantType::NIL,
             is_const: false,
+            defaults: Vec::new(),
         }
     }
 
@@ -174,6 +177,15 @@ impl ScriptMethod {
     /// Sets the return type from the Rust type, as `#[func]` does.
     pub fn returns_of<T: Var>(mut self) -> Self {
         self.return_type = PropertyInfo::new_var::<T>("").variant_type;
+        self
+    }
+
+    /// Declares a default for the next optional parameter, in call order.
+    ///
+    /// `#[func]` writes one of these for every `#[opt(default = ...)]` parameter;
+    /// the editor shows them and callers may leave those arguments out.
+    pub fn default_value<T: ToGodot>(mut self, value: T) -> Self {
+        self.defaults.push(value.to_variant());
         self
     }
 
@@ -207,7 +219,7 @@ impl ScriptMethod {
                     usage: PropertyUsageFlags::DEFAULT,
                 })
                 .collect(),
-            default_arguments: Vec::new(),
+            default_arguments: self.defaults.clone(),
             flags: if self.is_const {
                 MethodFlags::CONST
             } else {
@@ -368,15 +380,29 @@ pub trait ScriptApi: Sized {
     fn api_exit_tree(&mut self) {}
 }
 
+/// The frame time the engine passes to `_process`/`_physics_process`.
+///
+/// Returns 0.0 when the engine (or a direct call) passes something else.
+fn frame_delta(args: &[&Variant]) -> f64 {
+    args.first()
+        .and_then(|value| f64::try_from_variant(value).ok())
+        .unwrap_or(0.0)
+}
+
+/// Converts one argument of a script call.
+pub fn argument_value<T: FromGodot>(value: &Variant) -> Result<T, CallErrorType> {
+    T::try_from_variant(value).map_err(|_| CallErrorType::InvalidArgument)
+}
+
 /// Reads argument `index` of a script call, reporting the usual call errors.
 ///
 /// Used by the generated dispatch code; write it by hand in `call_method` when a
 /// method has optional arguments.
 pub fn call_argument<T: FromGodot>(args: &[&Variant], index: usize) -> Result<T, CallErrorType> {
-    let Some(value) = args.get(index) else {
-        return Err(CallErrorType::TooFewArguments);
-    };
-    T::try_from_variant(value).map_err(|_| CallErrorType::InvalidArgument)
+    match args.get(index) {
+        Some(value) => argument_value(value),
+        None => Err(CallErrorType::TooFewArguments),
+    }
 }
 
 /// Lifecycle method names forwarded to the user's hooks.
@@ -435,12 +461,14 @@ impl<T: RustScript> ScriptInstance for ScriptInstanceHandle<T> {
         args: &[&Variant],
     ) -> Result<Variant, CallErrorType> {
         let name = method.to_string();
-        let delta = args.first().map(|value| f64::from_variant(value)).unwrap_or(0.0);
 
         match name.as_str() {
             "_ready" => this.user.ready(),
-            "_process" => this.user.process(delta),
-            "_physics_process" => this.user.physics_process(delta),
+            // Only the frame hooks take a delta; other methods must not touch the
+            // arguments before their own conversion runs (a String or int first
+            // argument is perfectly valid).
+            "_process" => this.user.process(frame_delta(args)),
+            "_physics_process" => this.user.physics_process(frame_delta(args)),
             "_enter_tree" => this.user.enter_tree(),
             "_exit_tree" => this.user.exit_tree(),
             _ => return this.user.call_method(&name, args),
@@ -572,6 +600,11 @@ fn methods_dictionary<T: RustScript>() -> VarArray {
             arguments.push(&argument_dictionary(argument));
         }
         entry.set("args", &arguments.to_variant());
+        let mut defaults = VarArray::new();
+        for value in &method.defaults {
+            defaults.push(value);
+        }
+        entry.set("defaults", &defaults.to_variant());
         array.push(&entry);
     }
     array

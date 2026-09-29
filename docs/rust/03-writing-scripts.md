@@ -79,8 +79,32 @@ pub struct Player {
 ```
 
 支持的类型就是 gdext 的导出类型：`f32`、`f64`、`i64`、`bool`、`GString`、
-`Vector2`、`Gd<某个节点>` 等；要用提示/枚举等复杂设置，可以手写 `PropertyInfo`
-（见第 10 节）。
+`Vector2`、`Gd<某个节点>` 等。
+
+`#[export(...)]` 里可以写一个**提示**，对应 GDScript 的 `@export_*`：
+
+| 写法 | 面板效果 |
+| --- | --- |
+| `range = (0.0, 100.0)` / `range = (0.0, 100.0, 0.5)` | 滑条（可选步长） |
+| `enum = ["Low", "High"]` | 下拉框（值是下标） |
+| `flags = ["A", "B"]` | 位标志多选 |
+| `file = "*.png"` / `global_file = "*.txt"` | 文件选择（过滤/绝对路径） |
+| `dir` | 目录选择 |
+| `multiline` | 多行文本框 |
+| `placeholder = "type here"` | 文本框占位符 |
+| `node = "Node2D"` | 只允许该类型的节点路径 |
+| `color_no_alpha` | 不带透明度的颜色 |
+| `exp_easing` | 缓动曲线 |
+| `storage` | 保存进场景但面板里隐藏 |
+
+一个属性只能有一个提示；写法可以组合 `default`，例如：
+
+```rust
+#[export(default = 1, enum = ["One", "Two"])]
+mode: i64,
+```
+
+更复杂的类型（自定义 `PropertyInfo`）可以手写 impl，见第 10 节。
 
 场景保存时属性值会随节点一起存下来，重新打开场景时自动写回字段。
 
@@ -133,8 +157,32 @@ print(player.get_method_argument_count("jump"))   # 1
 ```
 
 - 参数类型会自动转换；参数个数不够或类型不对，引擎会给出调用错误；
-- 想接受“可以不传”的参数就用 `Option<T>`（不传时是 `None`）；
 - 参数名会出现在编辑器的提示里。
+
+**默认参数**：用 `#[opt(default = ...)]` 标记，必须放在参数表最后，GDScript 就可以不传：
+
+```rust
+#[godot_script_api]
+impl Player {
+    #[func]
+    fn boost(
+        &mut self,
+        amount: f32,
+        #[opt(default = 1.0)] extra: f32,      // 可以不传
+        #[opt(default = 2)] times: i64,        // 每个可选参数都要写默认值
+    ) -> f32 {
+        amount + extra * times as f32
+    }
+}
+```
+
+```gdscript
+player.call("boost", 1.0)          # extra = 1.0, times = 2
+player.call("boost", 1.0, 5.0)     # times = 2
+player.call("boost", 1.0, 5.0, 3)  # 全部传入
+```
+
+默认值会随描述符一起注册，编辑器和 `get_method_list()` 里都能看到。
 
 ## 6. 声明信号
 

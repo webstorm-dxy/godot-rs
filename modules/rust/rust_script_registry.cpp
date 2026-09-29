@@ -36,6 +36,9 @@ static MethodInfo _descriptor_method(const Dictionary &p_dict, const StringName 
 	for (const Variant &argument : (Array)p_dict.get("args", Array())) {
 		info.arguments.push_back(_descriptor_property(argument));
 	}
+	for (const Variant &value : (Array)p_dict.get("defaults", Array())) {
+		info.default_arguments.push_back(value);
+	}
 	return info;
 }
 
@@ -82,6 +85,7 @@ static Dictionary _method_dictionary(const MethodInfo &p_info) {
 		args.push_back(_property_dictionary(argument));
 	}
 	dict["args"] = args;
+	dict["defaults"] = p_info.default_arguments;
 	return dict;
 }
 

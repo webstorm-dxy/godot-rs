@@ -52,11 +52,13 @@ like a `.gd` file.
 **Attachable scripts** (`support/godot-script`)
 
 - `#[derive(RustScript)]` reads the struct: `#[script(base = Node2D, tool, name)]`,
-  `#[export]` / `#[export(default = ..., range = (min, max))]` fields, and a field
-  called `owner` that receives the node the script is attached to.
+  `#[export]` fields (with `default`, `range`, `enum`, `flags`, `file`, `dir`,
+  `multiline`, `placeholder`, `node`, `color_no_alpha`, `exp_easing`, `storage`),
+  and a field called `owner` that receives the node the script is attached to.
 - `#[godot_script_api]` reads the impl block: the five lifecycle hooks by name
   (`ready`, `process`, `physics_process`, `enter_tree`, `exit_tree`), `#[func]`
-  methods callable from GDScript and the editor, and `#[signal]` declarations.
+  methods callable from GDScript and the editor (with `#[opt(default = ...)]`
+  optional parameters) and `#[signal]` declarations.
 - Exported properties reach the inspector, are saved with the scene, and work
   through a placeholder instance before the library exists.
 - Class name, base type, properties, methods and signals are reported to the

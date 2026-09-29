@@ -135,7 +135,8 @@ fn expand_derive(input: &DeriveInput) -> syn::Result<TokenStream2> {
 
         let mut export = false;
         let mut default: Option<Expr> = None;
-        let mut range: Option<TokenStream2> = None;
+        let mut hint: Option<TokenStream2> = None;
+        let mut storage = false;
         for attr in &field.attrs {
             if !attr.path().is_ident("export") {
                 continue;
@@ -149,31 +150,82 @@ fn expand_derive(input: &DeriveInput) -> syn::Result<TokenStream2> {
             if let syn::Meta::NameValue(_) = &attr.meta {
                 return Err(syn::Error::new_spanned(
                     attr,
-                    "use #[export] or #[export(default = ..., range = (min, max))]",
+                    "use #[export] or #[export(default = ..., range = (min, max), enum = [...], ...)]",
                 ));
             }
             attr.parse_nested_meta(|meta| {
                 if meta.path.is_ident("default") {
                     default = Some(meta.value()?.parse()?);
-                } else if meta.path.is_ident("range") {
+                    return Ok(());
+                }
+                if meta.path.is_ident("storage") {
+                    if hint.is_some() {
+                        return Err(meta.error("storage cannot be combined with a hint"));
+                    }
+                    storage = true;
+                    return Ok(());
+                }
+
+                let function = if meta.path.is_ident("range") {
                     let value: Expr = meta.value()?.parse()?;
                     let Expr::Tuple(tuple) = value else {
                         return Err(meta.error("range expects a tuple, e.g. #[export(range = (0.0, 10.0))]"));
                     };
-                    if tuple.elems.len() != 2 {
-                        return Err(meta.error("range expects exactly two values: minimum and maximum"));
+                    if tuple.elems.len() < 2 || tuple.elems.len() > 3 {
+                        return Err(meta.error("range expects (minimum, maximum) or (minimum, maximum, step)"));
                     }
                     let min = &tuple.elems[0];
                     let max = &tuple.elems[1];
-                    range = Some(quote! {
-                        .with_hint_info(::godot::register::property::export_fns::export_range(
-                            #min, #max, ::core::option::Option::None, false, false, false, false, false, false,
+                    let step = match tuple.elems.get(2) {
+                        Some(step) => quote!(::core::option::Option::Some(#step)),
+                        None => quote!(::core::option::Option::None),
+                    };
+                    quote! {
+                        ::godot::register::property::export_fns::export_range(
+                            #min, #max, #step, false, false, false, false, false, false,
                             ::core::option::Option::None,
-                        ))
-                    });
+                        )
+                    }
+                } else if meta.path.is_ident("enum") || meta.path.is_ident("flags") {
+                    let is_flags = meta.path.is_ident("flags");
+                    let value: Expr = meta.value()?.parse()?;
+                    let Expr::Array(array) = value else {
+                        return Err(meta.error("expected a list of names, e.g. enum = [\"Low\", \"High\"]"));
+                    };
+                    let names: Vec<&Expr> = array.elems.iter().collect();
+                    if is_flags {
+                        quote!(::godot::register::property::export_fns::export_flags(&[#((#names, ::core::option::Option::None)),*]))
+                    } else {
+                        quote!(::godot::register::property::export_fns::export_enum(&[#((#names, ::core::option::Option::None)),*]))
+                    }
+                } else if meta.path.is_ident("file") || meta.path.is_ident("global_file") {
+                    let is_global = meta.path.is_ident("global_file");
+                    let filter: LitStr = meta.value()?.parse()?;
+                    quote!(::godot::register::property::export_fns::export_file_or_dir::<#ty>(true, #is_global, #filter))
+                } else if meta.path.is_ident("dir") {
+                    quote!(::godot::register::property::export_fns::export_file_or_dir::<#ty>(false, false, ""))
+                } else if meta.path.is_ident("node") {
+                    let allowed: LitStr = meta.value()?.parse()?;
+                    quote!(::godot::register::property::export_fns::export_node_path::<#ty>(&[#allowed]))
+                } else if meta.path.is_ident("placeholder") {
+                    let text: LitStr = meta.value()?.parse()?;
+                    quote!(::godot::register::property::export_fns::export_placeholder(#text))
+                } else if meta.path.is_ident("multiline") {
+                    quote!(::godot::register::property::export_fns::export_multiline())
+                } else if meta.path.is_ident("color_no_alpha") {
+                    quote!(::godot::register::property::export_fns::export_color_no_alpha())
+                } else if meta.path.is_ident("exp_easing") {
+                    quote!(::godot::register::property::export_fns::export_exp_easing(false, false))
                 } else {
-                    return Err(meta.error("unknown option: expected default = ... or range = (min, max)"));
+                    return Err(meta.error(
+                        "unknown option: expected default, range, enum, flags, file, global_file, dir, node, placeholder, multiline, color_no_alpha, storage or exp_easing",
+                    ));
+                };
+
+                if hint.is_some() {
+                    return Err(meta.error("a property can only have one hint"));
                 }
+                hint = Some(quote!(.with_hint_info(#function)));
                 Ok(())
             })?;
         }
@@ -188,8 +240,16 @@ fn expand_derive(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
 
         if export {
-            properties.push(quote! {
-                ::godot::register::info::PropertyInfo::new_export::<#ty>(#name) #range
+            // `#[export(storage)]` is a usage flag, not a hint: the property is saved
+            // with the scene but stays out of the inspector.
+            properties.push(if storage {
+                quote! {{
+                    let mut info = ::godot::register::info::PropertyInfo::new_export::<#ty>(#name);
+                    info.usage = ::godot::register::info::PropertyUsageFlags::STORAGE;
+                    info
+                }}
+            } else {
+                quote!(::godot::register::info::PropertyInfo::new_export::<#ty>(#name) #hint)
             });
             getters.push(quote! {
                 #name => ::core::option::Option::Some(::godot::meta::ToGodot::to_variant(&self.#ident)),
@@ -349,10 +409,21 @@ fn expand_api(item: &ItemImpl) -> syn::Result<TokenStream2> {
         cleaned
             .attrs
             .retain(|attr| !attr.path().is_ident("func") && !attr.path().is_ident("signal"));
+        for input in &mut cleaned.sig.inputs {
+            if let FnArg::Typed(pat_type) = input {
+                pat_type.attrs.retain(|attr| !attr.path().is_ident("opt"));
+            }
+        }
 
         let arguments = method_arguments(method)?;
-        let argument_infos = arguments.iter().map(|(argument_name, argument_type)| {
-            quote!(.arg_of::<#argument_type>(#argument_name))
+        let argument_infos = arguments.iter().map(|argument| {
+            let arg_name = &argument.name;
+            let arg_type = &argument.ty;
+            quote!(.arg_of::<#arg_type>(#arg_name))
+        });
+        let default_infos = arguments.iter().filter_map(|argument| {
+            let default = argument.default.as_ref()?;
+            Some(quote!(.default_value(#default)))
         });
 
         if is_signal {
@@ -386,16 +457,29 @@ fn expand_api(item: &ItemImpl) -> syn::Result<TokenStream2> {
                 ReturnType::Type(_, ty) => quote!(.returns_of::<#ty>()),
             };
             method_infos.push(quote! {
-                ::godot_script::ScriptMethod::new(#name) #(#argument_infos)* #returns
+                ::godot_script::ScriptMethod::new(#name) #(#argument_infos)* #(#default_infos)* #returns
             });
 
             let mut bindings = Vec::new();
             let mut call_arguments = Vec::new();
-            for (index, (_, argument_type)) in arguments.iter().enumerate() {
+            for (index, argument) in arguments.iter().enumerate() {
                 let binding = format_ident!("__arg{}", index);
-                bindings.push(quote! {
-                    let #binding: #argument_type = ::godot_script::call_argument(args, #index)?;
-                });
+                let argument_type = &argument.ty;
+                match &argument.default {
+                    // #[opt(default = ...)]: use the default when the caller leaves
+                    // the argument out, exactly like a GDScript default parameter.
+                    Some(default) => bindings.push(quote! {
+                        let #binding: #argument_type = match args.get(#index) {
+                            ::core::option::Option::Some(value) => {
+                                ::godot_script::argument_value(value)?
+                            }
+                            ::core::option::Option::None => #default,
+                        };
+                    }),
+                    None => bindings.push(quote! {
+                        let #binding: #argument_type = ::godot_script::call_argument(args, #index)?;
+                    }),
+                }
                 call_arguments.push(quote!(#binding));
             }
             let call = quote!(Self::#ident(self #(, #call_arguments)*));
@@ -461,9 +545,18 @@ fn expand_api(item: &ItemImpl) -> syn::Result<TokenStream2> {
     })
 }
 
+/// One parameter of a `#[func]` method.
+struct MethodArgument {
+    name: String,
+    ty: Type,
+    /// Set by `#[opt(default = ...)]`: the value used when the caller omits it.
+    default: Option<Expr>,
+}
+
 /// The named parameters of a method, skipping the receiver.
-fn method_arguments(method: &ImplItemFn) -> syn::Result<Vec<(String, Type)>> {
+fn method_arguments(method: &ImplItemFn) -> syn::Result<Vec<MethodArgument>> {
     let mut arguments = Vec::new();
+    let mut optional_seen = false;
     for input in &method.sig.inputs {
         let FnArg::Typed(pat_type) = input else {
             continue;
@@ -477,7 +570,37 @@ fn method_arguments(method: &ImplItemFn) -> syn::Result<Vec<(String, Type)>> {
                 ));
             }
         };
-        arguments.push((name, (*pat_type.ty).clone()));
+
+        let mut default: Option<Expr> = None;
+        for attr in &pat_type.attrs {
+            if !attr.path().is_ident("opt") {
+                continue;
+            }
+            attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("default") {
+                    default = Some(meta.value()?.parse()?);
+                    Ok(())
+                } else {
+                    Err(meta.error("expected #[opt(default = ...)]"))
+                }
+            })?;
+        }
+        match (&default, optional_seen) {
+            (Some(_), _) => optional_seen = true,
+            (None, true) => {
+                return Err(syn::Error::new_spanned(
+                    pat_type,
+                    "parameters with #[opt(default = ...)] must come last",
+                ));
+            }
+            (None, false) => {}
+        }
+
+        arguments.push(MethodArgument {
+            name,
+            ty: (*pat_type.ty).clone(),
+            default,
+        });
     }
     Ok(arguments)
 }

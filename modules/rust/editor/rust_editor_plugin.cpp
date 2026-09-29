@@ -121,6 +121,10 @@ void RustEditorPlugin::_check_project() {
 	} else {
 		_try_load_extension();
 	}
+
+	// Refresh the descriptor cache from whatever library is loaded right now, so
+	// it also updates in sessions that do not build anything.
+	RustProject::save_script_cache();
 }
 
 void RustEditorPlugin::_try_load_extension() {
@@ -139,6 +143,8 @@ void RustEditorPlugin::_try_load_extension() {
 	GDExtensionManager::LoadStatus status = manager->load_extension(config);
 	if (status == GDExtensionManager::LOAD_STATUS_OK) {
 		print_line(vformat("Rust extension loaded: %s", config));
+		// The registry now holds the descriptors of this library.
+		RustProject::save_script_cache();
 
 		// Scenes opened before the build could not instantiate Rust node types;
 		// refresh the ones without unsaved changes so they show up.
