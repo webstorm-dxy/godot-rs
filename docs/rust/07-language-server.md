@@ -20,6 +20,30 @@ rustup component add rust-analyzer
 
 找不到也不会报错：只是补全/悬停这些功能静默关闭（打开 `--verbose` 会看到一行提示）。
 
+### 启动失败怎么排查
+
+如果日志里出现：
+
+```
+WARNING: Rust: rust-analyzer did not start (the language server stopped).
+  error: Unknown binary 'rust-analyzer' in official toolchain 'stable-...'.
+```
+
+说明 `~/.cargo/bin/rust-analyzer` 只是个 rustup 代理，而组件没装：
+
+```sh
+rustup component add rust-analyzer
+rust-analyzer --version      # 自检：应打印版本号，而不是 error:
+```
+
+（若提示 `no default is configured`，先 `rustup default stable`。）
+
+编辑器从 Finder 启动时 `PATH` 可能不含 `~/.cargo/bin`，此时在编辑器设置里把
+`rust/rust_analyzer_path` 设为 `~/.cargo/bin/rust-analyzer` 的绝对路径即可。
+
+客户端会在子进程退出时立刻失败（约 0.1 秒）并把它的 stderr 一起打印出来，不会卡住
+编辑器等超时。
+
 ## 2. 开关
 
 | 设置 | 默认 | 说明 |

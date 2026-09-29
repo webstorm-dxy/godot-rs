@@ -105,6 +105,8 @@ bool RustLsp::start(const String &p_crate_root_global) {
 	{
 		MutexLock lock(mutex);
 		stdio = pipe["stdio"];
+		stderr_pipe = pipe.has("stderr") ? (Ref<FileAccess>)pipe["stderr"] : Ref<FileAccess>();
+		analyzer_stderr.clear();
 		child_pid = pipe.has("pid") ? (int64_t)pipe["pid"] : 0;
 		analyzer_path = analyzer;
 		crate_root = p_crate_root_global.simplify_path();
@@ -145,7 +147,15 @@ bool RustLsp::start(const String &p_crate_root_global) {
 	Dictionary result;
 	String error;
 	if (!_request("initialize", params, result, 20000, error)) {
-		ERR_PRINT(vformat("Rust: rust-analyzer initialization failed: %s", error));
+		String detail;
+		{
+			MutexLock lock(mutex);
+			for (const String &line : analyzer_stderr) {
+				detail += "\n  " + line;
+			}
+		}
+		// Optional feature: do not shout, just explain how to enable it.
+		WARN_PRINT(vformat("Rust: rust-analyzer did not start (%s). Install it with `rustup component add rust-analyzer` or point rust/rust_analyzer_path at a working binary.%s", error, detail));
 		stop();
 		return false;
 	}
@@ -185,6 +195,7 @@ void RustLsp::stop() {
 	}
 	MutexLock lock(mutex);
 	stdio.unref();
+	stderr_pipe.unref();
 	responses.clear();
 	open_docs.clear();
 }
@@ -259,13 +270,56 @@ void RustLsp::_read_loop() {
 		}
 
 		uint64_t read = 0;
+		uint64_t err_read = 0;
 		{
 			MutexLock lock(mutex);
 			if (stdio.is_valid()) {
 				read = stdio->get_buffer(chunk, sizeof(chunk));
 			}
+			if (stderr_pipe.is_valid()) {
+				uint8_t err_chunk[1024];
+				err_read = stderr_pipe->get_buffer(err_chunk, sizeof(err_chunk));
+				if (err_read > 0) {
+					// Keep the last lines around: they explain why the server died.
+					analyzer_stderr.append_array(String::utf8((const char *)err_chunk, (int)err_read).split("\n", false));
+					while (analyzer_stderr.size() > 20) {
+						analyzer_stderr.remove_at(0);
+					}
+				}
+			}
 		}
-		if (read == 0) {
+		if (read == 0 && err_read == 0) {
+			// A rustup proxy without the component exits right away; detect that
+			// instead of waiting for the request timeout.
+			if (child_pid != 0 && !OS::get_singleton()->is_process_running((ProcessID)child_pid)) {
+				// Drain what is still buffered, so the error message can include the
+				// reason the process died (e.g. rustup's "Unknown binary" line).
+				for (int drain = 0; drain < 20; drain++) {
+					uint8_t tail[1024];
+					uint64_t tail_out = 0;
+					uint64_t tail_err = 0;
+					{
+						MutexLock lock(mutex);
+						if (stdio.is_valid()) {
+							tail_out = stdio->get_buffer(tail, sizeof(tail));
+						}
+						if (stderr_pipe.is_valid()) {
+							tail_err = stderr_pipe->get_buffer(tail, sizeof(tail));
+							if (tail_err > 0) {
+								analyzer_stderr.append_array(String::utf8((const char *)tail, (int)tail_err).split("\n", false));
+							}
+						}
+					}
+					if (tail_out == 0 && tail_err == 0) {
+						break;
+					}
+					OS::get_singleton()->delay_usec(2000);
+				}
+				MutexLock lock(mutex);
+				running = false;
+				initialized = false;
+				break;
+			}
 			OS::get_singleton()->delay_usec(2000);
 			continue;
 		}

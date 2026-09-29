@@ -6,6 +6,7 @@
 #include "core/os/thread.h"
 #include "core/string/ustring.h"
 #include "core/templates/hash_map.h"
+#include "core/templates/vector.h"
 #include "core/variant/dictionary.h"
 
 // Minimal LSP client for rust-analyzer.
@@ -74,6 +75,8 @@ private:
 	mutable Mutex mutex;
 	Thread thread;
 	Ref<FileAccess> stdio;
+	Ref<FileAccess> stderr_pipe;
+	Vector<String> analyzer_stderr;
 	int64_t child_pid = 0;
 	bool running = false;
 	bool initialized = false;
