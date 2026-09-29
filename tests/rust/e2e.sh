@@ -56,6 +56,8 @@ use godot_script::prelude::*;
 #[script(base = Node2D)]
 pub struct Emitter {
     owner: Gd<Node2D>,
+    #[export(default = 5)]
+    hits: i64,
 }
 
 #[godot_script_api]
@@ -90,6 +92,7 @@ func _ready() -> void:
 		properties.append(String(property.name))
 	print("E2E properties ", properties)
 	var emitter: Node2D = $Emitter
+	print("E2E revert ", emitter.property_can_revert("hits"), " ", emitter.property_get_revert("hits"))
 	emitter.connect("pinged", Callable(self, "_on_pinged"))
 	emitter.call("emit_ping", 42)
 EOF
@@ -133,6 +136,7 @@ echo "$OUTPUT" | grep -q 'E2E speed 7' || fail "the exported property did not ro
 echo "$OUTPUT" | grep -q 'E2E has_signal true' || fail "has_signal() did not see the #[signal] declaration"
 echo "$OUTPUT" | grep -q 'E2E properties \["speed"\]' || fail "the script property list is wrong"
 echo "$OUTPUT" | grep -q 'E2E signal 42' || fail "the emitted signal did not reach GDScript"
+echo "$OUTPUT" | grep -q 'E2E revert true 5' || fail "the #[export(default = ...)] value is not offered as revert"
 
 echo "== regenerate bindings"
 "$BIN" --headless --editor --path "$PROJ" --rust-regenerate-bindings --quit || fail "bindings regeneration failed"

@@ -294,6 +294,14 @@ pub trait RustScript: Sized + 'static {
         None
     }
 
+    /// Value the inspector offers when a property is reverted.
+    ///
+    /// `#[derive(RustScript)]` answers this for every exported field: the
+    /// `#[export(default = ...)]` expression, or `Default::default()`.
+    fn property_default(_name: &str) -> Option<Variant> {
+        None
+    }
+
     /// Writes one of [`RustScript::properties`].
     fn set_property(&mut self, _name: &str, _value: &Variant) -> bool {
         false
@@ -442,6 +450,10 @@ impl<T: RustScript> ScriptInstance for ScriptInstanceHandle<T> {
 
     fn get_property(&self, name: StringName) -> Option<Variant> {
         self.user.get_property(&name.to_string())
+    }
+
+    fn on_property_get_revert(&self, name: StringName) -> Option<Variant> {
+        T::property_default(&name.to_string())
     }
 
     fn get_property_list(&self) -> Vec<PropertyInfo> {

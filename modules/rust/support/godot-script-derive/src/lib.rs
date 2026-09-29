@@ -124,6 +124,7 @@ fn expand_derive(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let mut properties = Vec::new();
     let mut getters = Vec::new();
     let mut setters = Vec::new();
+    let mut reverts = Vec::new();
     let mut has_owner = false;
 
     for field in fields {
@@ -254,6 +255,23 @@ fn expand_derive(input: &DeriveInput) -> syn::Result<TokenStream2> {
             getters.push(quote! {
                 #name => ::core::option::Option::Some(::godot::meta::ToGodot::to_variant(&self.#ident)),
             });
+            // The owner field is a Gd<T>, which has no Default: leave its revert
+            // value unset rather than failing to compile.
+            if name != "owner" {
+                let revert = if let Some(default) = &default {
+                    quote!(#default)
+                } else {
+                    quote!(<#ty as ::core::default::Default>::default())
+                };
+                // The field type pins the expression: `default = 5` has to become
+                // an i64 before it can be turned into a Variant.
+                reverts.push(quote! {
+                    #name => ::core::option::Option::Some({
+                        let value: #ty = #revert;
+                        ::godot::meta::ToGodot::to_variant(&value)
+                    }),
+                });
+            }
             setters.push(quote! {
                 #name => {
                     self.#ident = ::godot::meta::FromGodot::from_variant(value);
@@ -291,6 +309,15 @@ fn expand_derive(input: &DeriveInput) -> syn::Result<TokenStream2> {
             ) -> ::core::option::Option<::godot::builtin::Variant> {
                 match name {
                     #(#getters)*
+                    _ => ::core::option::Option::None,
+                }
+            }
+
+            fn property_default(
+                name: &str,
+            ) -> ::core::option::Option<::godot::builtin::Variant> {
+                match name {
+                    #(#reverts)*
                     _ => ::core::option::Option::None,
                 }
             }
