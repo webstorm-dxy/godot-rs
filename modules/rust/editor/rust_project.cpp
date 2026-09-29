@@ -389,6 +389,13 @@ void RustProject::sync_cargo_manifest() {
 			dependencies_at = i;
 			continue;
 		}
+		if (line.begins_with("[dependencies.")) {
+			// Table style: [dependencies.godot] / [dependencies.godot-script].
+			const String name = line.trim_prefix("[dependencies.").trim_suffix("]");
+			has_godot = has_godot || name == "godot";
+			has_script = has_script || name == "godot-script";
+			continue;
+		}
 		if (line.begins_with("godot-script")) {
 			has_script = true;
 		} else if (line.begins_with("godot")) {
@@ -400,7 +407,7 @@ void RustProject::sync_cargo_manifest() {
 	if (uses_script && !has_script) {
 		const String script_dep = _script_dependency_line();
 		if (script_dep.is_empty()) {
-			WARN_PRINT("Rust: the sources use godot_script but the module's support crate was not found; add godot-script to Cargo.toml manually.");
+			WARN_PRINT("Rust: these sources use godot_script, but no godot-script dependency was found in Cargo.toml and the module's support crate could not be located. Add it manually, e.g. godot-script = { path = \"<engine>/modules/rust/support/godot-script\" }.");
 		} else {
 			additions.push_back(script_dep);
 		}

@@ -423,6 +423,9 @@ bool RustBuild::start_build(const String &p_profile) {
 	}
 
 	// Bindings generation touches ClassDB, so it must run on the main thread.
+	// The crate is synced here as well (not only on editor startup) so that a
+	// project created by an older build is repaired before cargo ever runs.
+	RustProject::sync_crate();
 	RustBindings::ensure();
 
 	{
