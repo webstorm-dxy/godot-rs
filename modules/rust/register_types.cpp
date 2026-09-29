@@ -81,6 +81,8 @@ void initialize_rust_module(ModuleInitializationLevel p_level) {
 	if (p_level == MODULE_INITIALIZATION_LEVEL_SCENE) {
 		GDREGISTER_CLASS(RustScript);
 		GDREGISTER_CLASS(RustScriptRegistry);
+		// Registered for its static naming helpers (to_rust_type_name, ...).
+		GDREGISTER_CLASS(RustLanguage);
 
 		rust_diagnostics = memnew(RustDiagnostics);
 

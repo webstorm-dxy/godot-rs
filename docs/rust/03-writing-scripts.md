@@ -150,11 +150,22 @@ impl RustScript for Player {
 
 | 项 | 规则 | 例子 |
 | --- | --- | --- |
-| 文件名 | 必须是合法的 **Rust 模块名**：小写字母、数字、下划线，不能以数字开头，不能是 Rust 关键字 | `player.rs`、`my_enemy.rs` ✅ / `my-enemy.rs`、`2d_player.rs` ❌ |
-| 结构体名 | 合法的 Rust 类型名；用编辑器创建脚本时，会由文件名自动转成 **PascalCase** | `my_enemy.rs` → `struct MyEnemy` |
+| 文件名 | 必须是合法的 **Rust 模块名**：字母、数字、下划线，不以数字开头，不能是关键字。推荐小写加下划线（Rust 惯例） | `player.rs`、`my_enemy.rs` ✅ / `my-enemy.rs`、`2d_player.rs` ❌ |
+| 结构体名 | 合法的 Rust 类型名；编辑器创建脚本时按 **Rust 标准 UpperCamelCase** 从文件名生成 | `player.rs` → `struct Player`、`my_enemy.rs` → `struct MyEnemy`、`sprite_2d.rs` → `struct Sprite2D`、`PLAYER.rs` → `struct Player` |
 | `CLASS_NAME` | 全局唯一（编辑器里显示、场景引用都用它） | `"MyEnemy"` |
 
 编辑器创建脚本时如果文件名不合法，会直接给出提示、不生成文件；手动写文件时请自己遵守。
+
+命名转换规则也可以在编辑器脚本/工具里直接调用（便于批量重命名等）：
+
+```gdscript
+RustLanguage.to_rust_type_name("sprite_2d")     # "Sprite2D"
+RustLanguage.to_rust_type_name("my-script")     # "MyScript"
+RustLanguage.is_valid_module_name("my-script")  # false
+```
+
+规则细节：按非字母数字切词、每词首字母大写（`sprite_2d` → `Sprite2D`）；全大写词按普通词处理
+（`PLAYER` → `Player`）；以数字开头时加 `Rust` 前缀；`Self` 改写为 `SelfScript`。
 
 `mod` 声明与注册调用不需要手写：保存脚本时、以及每次打开编辑器时，模块都会扫描 `src/*.rs`
 并补齐（注册调用仅当文件里出现 `register_script!` 时才会加），所以旧项目也会自动修好。

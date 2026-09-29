@@ -7,8 +7,21 @@ class RustLanguage : public ScriptLanguage {
 
 	static RustLanguage *singleton;
 
+protected:
+	static void _bind_methods();
+
 public:
 	static RustLanguage *get_singleton() { return singleton; }
+
+	// Naming rules shared by the editor integration and by tooling/tests.
+	//
+	// `to_rust_type_name` turns a file base name into a Rust type name following
+	// the standard UpperCamelCase convention ("my_script" -> "MyScript",
+	// "sprite_2d" -> "Sprite2D", "PLAYER" -> "Player").
+	static String to_rust_type_name(const String &p_name);
+	// Module (file) names must be valid Rust identifiers in snake_case and must
+	// not collide with a Rust keyword.
+	static bool is_valid_module_name(const String &p_name);
 
 	virtual String get_name() const override { return "Rust"; }
 	virtual void init() override {}

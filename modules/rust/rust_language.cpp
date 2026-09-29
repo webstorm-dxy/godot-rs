@@ -1,6 +1,8 @@
 #include "rust_language.h"
 
 #include "rust_diagnostics.h"
+
+#include "core/object/class_db.h"
 #include "rust_script.h"
 #include "rust_script_registry.h"
 
@@ -78,22 +80,6 @@ static bool _is_valid_rust_identifier(const String &p_name) {
 	return true;
 }
 
-static bool _is_valid_rust_module_name(const String &p_name) {
-	if (!_is_valid_rust_identifier(p_name)) {
-		return false;
-	}
-	static const char *const keywords[] = { "as", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return", "self", "static", "struct", "super", "trait", "true", "type", "unsafe", "use", "where", "while", nullptr };
-	for (int i = 0; keywords[i] != nullptr; i++) {
-		if (p_name == keywords[i]) {
-			return false;
-		}
-	}
-	return true;
-}
-
-// Turns a file base name ("my-script", "player") into a Rust type name
-// ("MyScript", "Player"); the script dialog derives the class name from the
-// file name, which is not necessarily a valid Rust identifier.
 static String _to_rust_type_name(const String &p_name) {
 	String out;
 	bool capitalize = true;
@@ -119,13 +105,112 @@ static String _to_rust_type_name(const String &p_name) {
 	return out;
 }
 
+static bool _is_rust_keyword(const String &p_name) {
+	static const char *const keywords[] = { "as", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return", "self", "static", "struct", "super", "trait", "true", "type", "unsafe", "use", "where", "while", nullptr };
+	for (int i = 0; keywords[i] != nullptr; i++) {
+		if (p_name == keywords[i]) {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool RustLanguage::is_valid_module_name(const String &p_name) {
+	// Rust accepts any identifier here (snake_case is only a lint), so only reject
+	// what cannot compile: keywords, reserved type names and invalid identifiers.
+	if (p_name.is_empty() || _is_rust_keyword(p_name) || p_name == "Self") {
+		return false;
+	}
+	if (p_name[0] >= '0' && p_name[0] <= '9') {
+		return false;
+	}
+	for (int i = 0; i < p_name.length(); i++) {
+		const char32_t c = p_name[i];
+		const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+		if (!ok) {
+			return false;
+		}
+	}
+	return true;
+}
+
+String RustLanguage::to_rust_type_name(const String &p_name) {
+	// Split on anything that is not alphanumeric: those are word boundaries.
+	Vector<String> words;
+	String current;
+	for (int i = 0; i < p_name.length(); i++) {
+		const char32_t c = p_name[i];
+		const bool alnum = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+		if (alnum) {
+			current += String::chr(c);
+		} else if (!current.is_empty()) {
+			words.push_back(current);
+			current = String();
+		}
+	}
+	if (!current.is_empty()) {
+		words.push_back(current);
+	}
+	if (words.is_empty()) {
+		return "MyScript";
+	}
+
+	String out;
+	for (const String &word : words) {
+		// An all-uppercase word (e.g. PLAYER) counts as one word and is lowered
+		// first, as Rust style treats acronyms as ordinary words.
+		bool all_upper = true;
+		bool has_letter = false;
+		for (int i = 0; i < word.length(); i++) {
+			const char32_t c = word[i];
+			if (c >= 'a' && c <= 'z') {
+				all_upper = false;
+				has_letter = true;
+			} else if (c >= 'A' && c <= 'Z') {
+				has_letter = true;
+			}
+		}
+		const String normalized = (has_letter && all_upper) ? word.to_lower() : word;
+
+		// Upper-case the first *letter* of the word. Digits do not consume that
+		// position, so "sprite_2d" becomes "Sprite2D".
+		bool upper_next_letter = true;
+		for (int i = 0; i < normalized.length(); i++) {
+			const char32_t c = normalized[i];
+			const bool is_letter = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+			if (is_letter && upper_next_letter) {
+				out += String::chr(c).to_upper();
+				upper_next_letter = false;
+			} else {
+				out += String::chr(c);
+			}
+		}
+	}
+
+	if (out.is_empty()) {
+		out = "MyScript";
+	}
+	if (out[0] >= '0' && out[0] <= '9') {
+		out = "Rust" + out;
+	}
+	if (out == "Self") {
+		out = "SelfScript";
+	}
+	return out;
+}
+
+void RustLanguage::_bind_methods() {
+	ClassDB::bind_static_method("RustLanguage", D_METHOD("to_rust_type_name", "name"), &RustLanguage::to_rust_type_name);
+	ClassDB::bind_static_method("RustLanguage", D_METHOD("is_valid_module_name", "name"), &RustLanguage::is_valid_module_name);
+}
+
 String RustLanguage::validate_path(const String &p_path) const {
 	if (!p_path.get_extension().to_lower().is_empty() && p_path.get_extension().to_lower() != "rs") {
 		return "Rust scripts must use the .rs extension.";
 	}
 	const String stem = p_path.get_file().get_basename();
-	if (!stem.is_empty() && !_is_valid_rust_module_name(stem)) {
-		return "Rust script file names must be valid module names: lowercase letters, digits and underscores (e.g. \"my_script.rs\").";
+	if (!stem.is_empty() && !is_valid_module_name(stem)) {
+		return "The script file name must be a valid Rust module name: letters, digits and underscores, not starting with a digit (e.g. \"my_script.rs\").";
 	}
 	return String();
 }
@@ -231,7 +316,7 @@ Ref<Script> RustLanguage::make_template(const String &p_template, const String &
 		// expressed as a Rust base type, so fall back to a plain Node.
 		base = "Node";
 	}
-	const String class_name = _to_rust_type_name(p_class_name);
+	const String class_name = to_rust_type_name(p_class_name);
 
 	// Attachable-script template: the class extends `base`, so the script can be
 	// attached to any node of that type. The saver adds the `mod` declaration and
