@@ -625,8 +625,14 @@ pub fn register<T: RustScript>(file_path: &str) {
             T::BASE_NAME.to_variant(),
             T::IS_TOOL.to_variant(),
             create_fn.to_variant(),
-            descriptor.to_variant(),
         ],
+    );
+
+    // The descriptor travels in its own call: libraries compiled against an older
+    // engine must keep resolving `register_script_type` by its method hash.
+    registry.call(
+        "set_script_descriptor",
+        &[path.to_variant(), descriptor.to_variant()],
     );
 
     godot::global::godot_print!(

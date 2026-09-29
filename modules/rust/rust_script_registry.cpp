@@ -120,7 +120,7 @@ void RustScriptRegistry::destroy_singleton() {
 	}
 }
 
-void RustScriptRegistry::register_script_type(const String &p_path, const String &p_class_name, const String &p_base, bool p_is_tool, int64_t p_create_fn, const Dictionary &p_descriptor) {
+void RustScriptRegistry::register_script_type(const String &p_path, const String &p_class_name, const String &p_base, bool p_is_tool, int64_t p_create_fn) {
 	ERR_FAIL_COND_MSG(p_path.is_empty(), "Rust: script type without a source path.");
 	ERR_FAIL_COND_MSG(p_class_name.is_empty(), "Rust: script type without a class name.");
 
@@ -131,12 +131,25 @@ void RustScriptRegistry::register_script_type(const String &p_path, const String
 	type.is_tool = p_is_tool;
 	type.create_fn = p_create_fn;
 
-	_fill_descriptor(type, p_descriptor);
-
 	MutexLock lock(mutex);
 	by_path[p_path] = type;
 
 	print_verbose(vformat("Rust: registered script '%s' (%s, base %s).", p_path, p_class_name, p_base));
+}
+
+void RustScriptRegistry::set_script_descriptor(const String &p_path, const Dictionary &p_descriptor) {
+	if (p_path.is_empty()) {
+		return;
+	}
+
+	MutexLock lock(mutex);
+	ScriptType *type = by_path.getptr(p_path);
+	if (type == nullptr) {
+		// The registration call comes first; ignore a stray descriptor instead of
+		// inventing an entry without an instance factory.
+		return;
+	}
+	_fill_descriptor(*type, p_descriptor);
 }
 
 void RustScriptRegistry::register_script_descriptor(const String &p_path, const Dictionary &p_data) {
@@ -217,7 +230,8 @@ PackedStringArray RustScriptRegistry::get_registered_paths() const {
 }
 
 void RustScriptRegistry::_bind_methods() {
-	ClassDB::bind_method(D_METHOD("register_script_type", "path", "class_name", "base", "is_tool", "create_fn", "descriptor"), &RustScriptRegistry::register_script_type, DEFVAL(Dictionary()));
+	ClassDB::bind_method(D_METHOD("register_script_type", "path", "class_name", "base", "is_tool", "create_fn"), &RustScriptRegistry::register_script_type);
+	ClassDB::bind_method(D_METHOD("set_script_descriptor", "path", "descriptor"), &RustScriptRegistry::set_script_descriptor);
 	ClassDB::bind_method(D_METHOD("clear_script_types"), &RustScriptRegistry::clear_script_types);
 	ClassDB::bind_method(D_METHOD("has_script_type", "path"), &RustScriptRegistry::has_script_type);
 	ClassDB::bind_method(D_METHOD("get_registered_paths"), &RustScriptRegistry::get_registered_paths);

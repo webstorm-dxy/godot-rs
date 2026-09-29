@@ -164,6 +164,13 @@ bool RustProject::is_library_stale(const String &p_library_path_global) {
 		return true;
 	}
 	uint64_t lib_time = FileAccess::get_modified_time(p_library_path_global);
+	// The bindings are regenerated whenever the engine changes, so a library that
+	// is older than them was built against another engine build and must be
+	// rebuilt (its method hashes and API dump no longer match).
+	const String api_json = RustPaths::get_bindings_dir_global().path_join("extension_api.json");
+	if (FileAccess::exists(api_json) && FileAccess::get_modified_time(api_json) > lib_time) {
+		return true;
+	}
 	String crate_root = get_crate_root_global();
 	if (crate_root.is_empty()) {
 		return true;
