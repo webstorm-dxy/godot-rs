@@ -40,6 +40,13 @@ public:
 	static void sync_cargo_manifest();
 	// Runs both sync steps (manifest + module declarations).
 	static void sync_crate();
+	// Writes the descriptors of the currently loaded Rust scripts to
+	// .godot/rust/script_cache.json, so the editor knows class name, base type,
+	// properties, methods and signals before (or without) a build.
+	static void save_script_cache();
+	// Fills the script registry from the cache for everything the loaded library
+	// does not describe itself; safe to call repeatedly.
+	static void load_script_cache();
 	static void register_editor_settings();
 	static bool handle_cmdline();
 

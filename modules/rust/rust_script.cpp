@@ -23,7 +23,9 @@ void RustScript::_bind_methods() {
 
 bool RustScript::can_instantiate() const {
 	RustScriptRegistry::ScriptType type;
-	return valid && _rust_script_lookup(path_cache, type);
+	// A descriptor loaded from the script cache has no instance factory, so the
+	// script only becomes instantiable once its library has been built and loaded.
+	return valid && _rust_script_lookup(path_cache, type) && type.create_fn != 0;
 }
 
 StringName RustScript::get_global_name() const {

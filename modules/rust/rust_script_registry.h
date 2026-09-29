@@ -41,6 +41,14 @@ public:
 	static void create_singleton();
 	static void destroy_singleton();
 
+	// Registers a script whose library is not loaded (`.godot/rust/script_cache.json`).
+	// The entry carries the descriptor but no instance factory.
+	void register_script_descriptor(const String &p_path, const Dictionary &p_data);
+
+	// The descriptor of one script, in the same shape `register_script_type` takes.
+	// Empty when the path is unknown.
+	Dictionary describe_script(const String &p_path) const;
+
 	// Called from Rust; `p_create_fn` is a `extern "C" fn(i64, i64, i64) -> void *`,
 	// and `p_descriptor` carries the properties/methods/signals of the script.
 	void register_script_type(const String &p_path, const String &p_class_name, const String &p_base, bool p_is_tool, int64_t p_create_fn, const Dictionary &p_descriptor = Dictionary());

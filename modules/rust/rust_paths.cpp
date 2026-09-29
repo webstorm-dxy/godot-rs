@@ -18,6 +18,10 @@ String RustPaths::get_target_dir_global() {
 	return get_data_dir_global().path_join("target");
 }
 
+String RustPaths::get_script_cache_res() {
+	return get_data_dir_res().path_join("script_cache.json");
+}
+
 String RustPaths::get_extension_config_res() {
 	return get_data_dir_res().path_join("rust.gdextension");
 }

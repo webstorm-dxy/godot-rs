@@ -39,6 +39,52 @@ static MethodInfo _descriptor_method(const Dictionary &p_dict, const StringName 
 	return info;
 }
 
+// Reads the properties/methods/signals part of a descriptor dictionary.
+static void _fill_descriptor(RustScriptRegistry::ScriptType &r_type, const Dictionary &p_descriptor) {
+	r_type.properties.clear();
+	r_type.methods.clear();
+	r_type.signals.clear();
+
+	for (const Variant &entry : (Array)p_descriptor.get("properties", Array())) {
+		r_type.properties.push_back(_descriptor_property(entry));
+	}
+	int id = 0;
+	for (const Variant &entry : (Array)p_descriptor.get("methods", Array())) {
+		const Dictionary method = entry;
+		r_type.methods.push_back(_descriptor_method(method, method.get("name", String()), id++));
+	}
+	id = 0;
+	for (const Variant &entry : (Array)p_descriptor.get("signals", Array())) {
+		const Dictionary signal = entry;
+		r_type.signals.push_back(_descriptor_method(signal, signal.get("name", String()), id++));
+	}
+}
+
+// The inverse of _fill_descriptor, used to write the script cache.
+static Dictionary _property_dictionary(const PropertyInfo &p_info) {
+	Dictionary dict;
+	dict["name"] = p_info.name;
+	dict["type"] = (int)p_info.type;
+	dict["class_name"] = p_info.class_name;
+	dict["hint"] = (int)p_info.hint;
+	dict["hint_string"] = p_info.hint_string;
+	dict["usage"] = (int64_t)p_info.usage;
+	return dict;
+}
+
+static Dictionary _method_dictionary(const MethodInfo &p_info) {
+	Dictionary dict;
+	dict["name"] = p_info.name;
+	dict["return_type"] = (int)p_info.return_val.type;
+	dict["is_const"] = (p_info.flags & METHOD_FLAG_CONST) != 0;
+	Array args;
+	for (const PropertyInfo &argument : p_info.arguments) {
+		args.push_back(_property_dictionary(argument));
+	}
+	dict["args"] = args;
+	return dict;
+}
+
 MethodInfo RustScriptRegistry::ScriptType::find_method(const StringName &p_name) const {
 	for (const MethodInfo &method : methods) {
 		if (method.name == p_name) {
@@ -85,24 +131,60 @@ void RustScriptRegistry::register_script_type(const String &p_path, const String
 	type.is_tool = p_is_tool;
 	type.create_fn = p_create_fn;
 
-	for (const Variant &entry : (Array)p_descriptor.get("properties", Array())) {
-		type.properties.push_back(_descriptor_property(entry));
-	}
-	int id = 0;
-	for (const Variant &entry : (Array)p_descriptor.get("methods", Array())) {
-		const Dictionary method = entry;
-		type.methods.push_back(_descriptor_method(method, method.get("name", String()), id++));
-	}
-	id = 0;
-	for (const Variant &entry : (Array)p_descriptor.get("signals", Array())) {
-		const Dictionary signal = entry;
-		type.signals.push_back(_descriptor_method(signal, signal.get("name", String()), id++));
-	}
+	_fill_descriptor(type, p_descriptor);
 
 	MutexLock lock(mutex);
 	by_path[p_path] = type;
 
 	print_verbose(vformat("Rust: registered script '%s' (%s, base %s).", p_path, p_class_name, p_base));
+}
+
+void RustScriptRegistry::register_script_descriptor(const String &p_path, const Dictionary &p_data) {
+	ERR_FAIL_COND_MSG(p_path.is_empty(), "Rust: cached script without a source path.");
+
+	ScriptType type;
+	type.path = p_path;
+	type.class_name = p_data.get("class_name", String());
+	type.base = p_data.get("base", String());
+	type.is_tool = p_data.get("is_tool", false);
+	type.create_fn = 0;
+	_fill_descriptor(type, p_data);
+
+	MutexLock lock(mutex);
+	const ScriptType *loaded = by_path.getptr(p_path);
+	if (loaded != nullptr && loaded->create_fn != 0) {
+		// The library knows more than the cache does; keep its entry.
+		return;
+	}
+	by_path[p_path] = type;
+}
+
+Dictionary RustScriptRegistry::describe_script(const String &p_path) const {
+	ScriptType type;
+	if (!get_script_type(p_path, type)) {
+		return Dictionary();
+	}
+
+	Dictionary data;
+	data["class_name"] = type.class_name;
+	data["base"] = type.base;
+	data["is_tool"] = type.is_tool;
+	Array properties;
+	for (const PropertyInfo &property : type.properties) {
+		properties.push_back(_property_dictionary(property));
+	}
+	data["properties"] = properties;
+	Array methods;
+	for (const MethodInfo &method : type.methods) {
+		methods.push_back(_method_dictionary(method));
+	}
+	data["methods"] = methods;
+	Array signals;
+	for (const MethodInfo &signal : type.signals) {
+		signals.push_back(_method_dictionary(signal));
+	}
+	data["signals"] = signals;
+	return data;
 }
 
 void RustScriptRegistry::clear_script_types() {

@@ -87,6 +87,8 @@ void RustEditorPlugin::_notification(int p_what) {
 			} else {
 				WARN_PRINT("Rust library rebuilt. Restart the editor to refresh Rust classes in the editor; running the game always uses the new library.");
 			}
+			// Refresh .godot/rust/script_cache.json with what is loaded right now.
+			RustProject::save_script_cache();
 		} break;
 		default: {
 		} break;
@@ -101,6 +103,9 @@ void RustEditorPlugin::_check_project() {
 
 	RustBindings::ensure();
 	RustProject::sync_crate();
+	// Descriptors from the last build keep the editor usable for scripts whose
+	// library is not loaded (yet).
+	RustProject::load_script_cache();
 
 	// Language server: completion, hover, go-to-definition and inline diagnostics.
 	if ((bool)GLOBAL_GET("rust/lsp/enabled")) {

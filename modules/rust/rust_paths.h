@@ -11,6 +11,7 @@ public:
 	static String get_data_dir_global();
 	static String get_bindings_dir_global();
 	static String get_target_dir_global();
+	static String get_script_cache_res();
 	static String get_extension_config_res();
 	static String get_extension_config_global();
 	static String get_extension_list_global();

@@ -2,10 +2,13 @@
 
 #include "rust_bindings.h"
 
+#include "../rust_script_registry.h"
+
 #include "core/config/project_settings.h"
 #include "core/io/config_file.h"
 #include "core/io/dir_access.h"
 #include "core/io/file_access.h"
+#include "core/io/json.h"
 #include "core/os/os.h"
 #include "core/variant/variant.h"
 #include "core/version.h"
@@ -556,6 +559,70 @@ void RustProject::sync_cargo_manifest() {
 void RustProject::sync_crate() {
 	sync_cargo_manifest();
 	sync_crate_modules();
+}
+
+void RustProject::save_script_cache() {
+	RustScriptRegistry *registry = RustScriptRegistry::get_singleton();
+	if (registry == nullptr || !has_project()) {
+		return;
+	}
+
+	Dictionary scripts;
+	for (const String &path : registry->get_registered_paths()) {
+		// A script whose file disappeared (renamed or deleted) must not come back
+		// from the cache on the next start.
+		if (!FileAccess::exists(path)) {
+			continue;
+		}
+		scripts[path] = registry->describe_script(path);
+	}
+
+	Dictionary cache;
+	cache["version"] = 1;
+	cache["scripts"] = scripts;
+
+	const String cache_path = RustPaths::get_script_cache_res();
+	DirAccess::make_dir_recursive_absolute(cache_path.get_base_dir());
+	Error err = OK;
+	Ref<FileAccess> file = FileAccess::open(cache_path, FileAccess::WRITE, &err);
+	if (err != OK) {
+		return;
+	}
+	file->store_string(JSON::stringify(cache, "\t"));
+	file->close();
+}
+
+void RustProject::load_script_cache() {
+	RustScriptRegistry *registry = RustScriptRegistry::get_singleton();
+	if (registry == nullptr || !has_project()) {
+		return;
+	}
+
+	const String path = RustPaths::get_script_cache_res();
+	if (!FileAccess::exists(path)) {
+		return;
+	}
+	Error err = OK;
+	Ref<FileAccess> file = FileAccess::open(path, FileAccess::READ, &err);
+	if (err != OK) {
+		return;
+	}
+	const String text = file->get_as_utf8_string();
+	file->close();
+
+	JSON json;
+	if (json.parse(text) != OK) {
+		return;
+	}
+	const Dictionary cache = json.get_data();
+	const Dictionary scripts = cache.get("scripts", Dictionary());
+	for (const Variant &key : scripts.keys()) {
+		const String script_path = key;
+		if (!FileAccess::exists(script_path)) {
+			continue;
+		}
+		registry->register_script_descriptor(script_path, scripts[script_path]);
+	}
 }
 
 void RustProject::register_editor_settings() {

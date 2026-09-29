@@ -12,6 +12,7 @@ modules/rust/
 ├── rust_script_resource_format.*# .rs 的加载/保存（保存时自动写入 crate 根）
 ├── rust_paths.*                 # .godot/rust 下的路径约定
 ├── rust_diagnostics.*           # 构建诊断（供编辑器显示行内错误）
+│                                # （描述符缓存 script_cache.json 由 rust_project 读写）
 ├── editor/                      # 构建集成（仅编辑器构建编译）
 │   ├── rust_project.*           # 脚手架、.gdextension、设置
 │   ├── rust_build.*             # cargo 调用 + JSON 诊断 + 线程
@@ -27,7 +28,8 @@ modules/rust/
 ```
 [Rust] register_script!(Player)
    │  通过引擎单例 RustScriptRegistry 调用 register_script_type(
-   │      path, class_name, base, is_tool, create_fn)
+   │      path, class_name, base, is_tool, create_fn, descriptor)
+   │      descriptor ＝ { properties, methods, signals }
    ▼
 [C++] RustScriptRegistry            （HashMap<res:// 路径, ScriptType>）
    │
@@ -45,12 +47,44 @@ modules/rust/
 [C++] gdextension_script_instance_wrap(ptr) → ScriptInstance* 返回给引擎
    │
    ▼
-[引擎] 调用属性读写、has_method/call（_ready/_process/...）
+[引擎] 调用属性读写、has_method/call（_ready/_process/... 以及 methods()/signals()）
       全部由 ScriptInstanceHandle 转发到你的 Rust 类型
 ```
 
-要点：**没有解析 `.rs` 源码**。类名、基类、属性都来自 Rust 编译期生成并注册的描述符；
-因此“构建过”是脚本生效的前提。
+要点：**没有解析 `.rs` 源码**。类名、基类、属性、方法、信号都来自 Rust 编译期生成并
+注册的描述符；因此“构建过”是脚本能实例化的前提。
+
+## 2.1 描述符缓存（未构建时也能显示）
+
+构建成功后，编辑器会把注册表里的描述符写成 `.godot/rust/script_cache.json`（整个文件
+由 `.godot/` 忽略规则管着，不进版本库）。下次打开编辑器时：
+
+1. 若扩展已加载，Rust 侧会重新注册，缓存里同名的条目被跳过（库里的信息更新）；
+2. 若还没构建/没加载（例如刚 clone 下来、或构建失败），`RustScript` 用缓存回答
+   `get_instance_base_type()` / `get_script_property_list()` / `get_script_method_list()` /
+   `get_script_signal_list()`，检视面板和“连接信号”对话框因此不会空白；
+3. 缓存条目的 `create_fn` 是 0，所以 `can_instantiate()` 仍然是 false，编辑器用占位实例
+   （只读显示属性），运行游戏前仍必须构建成功。
+
+文件结构：
+
+```json
+{
+  "version": 1,
+  "scripts": {
+    "res://src/player.rs": {
+      "class_name": "Player",
+      "base": "Node2D",
+      "is_tool": false,
+      "properties": [{ "name": "speed", "type": 3, "hint": 0, "hint_string": "", "usage": 6 }],
+      "methods": [{ "name": "jump", "return_type": 3, "args": [{ "name": "height", "type": 3 }] }],
+      "signals": [{ "name": "jumped", "args": [{ "name": "height", "type": 3 }] }]
+    }
+  }
+}
+```
+
+（`type` 就是 Godot 的 `Variant::Type` 编号，例如 3 = float、4 = String。）
 
 ## 3. 为什么要自己装载扩展
 
@@ -68,16 +102,17 @@ modules/rust/
 - 创建脚本时自动维护 `src/lib.rs` 的 `mod` / `register`；
 - 可挂载脚本：类名、基类校验、`new/ready/process/physics_process/enter_tree/exit_tree`、
   `properties/get_property/set_property`（检视面板 + 场景序列化）；
+- 方法与信号：`methods()/call_method()` 可从 GDScript 调用，`signals()` 可连接、可发射；
 - 占位实例：库未构建时挂载不报错，构建后生效；
+- 描述符缓存：`.godot/rust/script_cache.json`，未构建时也能显示类名/属性/方法/信号；
 - 内置 rust-analyzer：补全、悬停、跳转定义、实时诊断（见 [07-language-server.md](07-language-server.md)）。
 
 尚未实现（路线图）：
 
 | 项 | 说明 |
 | --- | --- |
-| `#[derive(RustScript)]` 派生宏 | 目前需手写 `impl RustScript`；派生宏可省掉样板 |
-| 描述符缓存 | 未构建时也能显示类名/属性（写 `.godot/rust/script_cache.json`） |
-| 方法（`#[func]`）、信号、RPC | 目前 `get_method_list` 为空，无法从 GDScript 调用 Rust 方法或发信号 |
+| `#[derive(RustScript)]` 派生宏 | 目前需手写 `impl RustScript` 的 `properties/methods/signals`；派生宏可省掉样板 |
+| RPC | `@rpc` 风格的多人同步 |
 | 工具脚本的编辑器集成 | `IS_TOOL` 已透传，属性刷新/撤销尚需打磨 |
 | 热重载 | 库重载后的类与实例状态迁移（对应计划里的 M4） |
 | 原生断点调试 | lldb-dap / CodeLLDB（M5） |
