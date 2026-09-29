@@ -68,7 +68,8 @@ modules/rust/
 - 创建脚本时自动维护 `src/lib.rs` 的 `mod` / `register`；
 - 可挂载脚本：类名、基类校验、`new/ready/process/physics_process/enter_tree/exit_tree`、
   `properties/get_property/set_property`（检视面板 + 场景序列化）；
-- 占位实例：库未构建时挂载不报错，构建后生效。
+- 占位实例：库未构建时挂载不报错，构建后生效；
+- 内置 rust-analyzer：补全、悬停、跳转定义、实时诊断（见 [07-language-server.md](07-language-server.md)）。
 
 尚未实现（路线图）：
 
@@ -81,7 +82,6 @@ modules/rust/
 | 热重载 | 库重载后的类与实例状态迁移（对应计划里的 M4） |
 | 原生断点调试 | lldb-dap / CodeLLDB（M5） |
 | 导出 | 把 cdylib 打进导出产物（M6） |
-| rust-analyzer 补全 | 内置编辑器 LSP（M3） |
 
 ## 5. 修改模块时的注意事项
 
