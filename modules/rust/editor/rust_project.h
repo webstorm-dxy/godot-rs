@@ -36,6 +36,10 @@ public:
 	// Makes sure every src/*.rs module is declared (and its scripts registered)
 	// in the crate root; safe to call repeatedly and heals older projects.
 	static void sync_crate_modules();
+	// Adds missing `godot` / `godot-script` dependencies for older projects.
+	static void sync_cargo_manifest();
+	// Runs both sync steps (manifest + module declarations).
+	static void sync_crate();
 	static void register_editor_settings();
 	static bool handle_cmdline();
 

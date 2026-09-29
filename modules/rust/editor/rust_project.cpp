@@ -315,6 +315,130 @@ void RustProject::sync_crate_modules() {
 	}
 }
 
+// Dependency lines used both by the scaffolder and by the self-healing manifest
+// sync, so a project created by an older build keeps working.
+static String _godot_dependency_line() {
+	const String vendor_dir = RustProject::get_vendor_dir();
+	if (!vendor_dir.is_empty() && DirAccess::dir_exists_absolute(vendor_dir.path_join("godot"))) {
+		return vformat("godot = { path = \"%s\", features = [\"api-custom-json\"] }", vendor_dir.path_join("godot").replace("\\", "/"));
+	}
+	return "godot = { version = \"0.5\", features = [\"api-custom-json\"] }";
+}
+
+static String _script_dependency_line() {
+	const String vendor_dir = RustProject::get_vendor_dir();
+	if (vendor_dir.is_empty()) {
+		return String();
+	}
+	const String support_dir = vendor_dir.get_base_dir().get_base_dir().path_join("support/godot-script");
+	if (!FileAccess::exists(support_dir.path_join("Cargo.toml"))) {
+		return String();
+	}
+	return vformat("godot-script = { path = \"%s\" }", support_dir.replace("\\", "/"));
+}
+
+void RustProject::sync_cargo_manifest() {
+	const String crate_root = get_crate_root_global();
+	const String src_dir = crate_root.path_join("src");
+	const String manifest = crate_root.path_join("Cargo.toml");
+	if (!FileAccess::exists(manifest)) {
+		return;
+	}
+
+	// Which dependencies do the sources actually use?
+	bool uses_godot = false;
+	bool uses_script = false;
+	Ref<DirAccess> dir = DirAccess::open(src_dir);
+	if (dir.is_valid()) {
+		dir->list_dir_begin();
+		String entry = dir->get_next();
+		while (!entry.is_empty()) {
+			if (!dir->current_is_dir() && entry.get_extension().to_lower() == "rs") {
+				Ref<FileAccess> source = FileAccess::open(src_dir.path_join(entry), FileAccess::READ);
+				if (source.is_valid()) {
+					const String text = source->get_as_utf8_string();
+					uses_godot = uses_godot || text.contains("godot::");
+					uses_script = uses_script || text.contains("godot_script::");
+				}
+			}
+			entry = dir->get_next();
+		}
+		dir->list_dir_end();
+	}
+	if (!uses_godot && !uses_script) {
+		return;
+	}
+
+	Error err;
+	Ref<FileAccess> file = FileAccess::open(manifest, FileAccess::READ, &err);
+	if (err != OK) {
+		return;
+	}
+	Vector<String> lines;
+	while (!file->eof_reached()) {
+		lines.push_back(file->get_line());
+	}
+	file->close();
+
+	bool has_godot = false;
+	bool has_script = false;
+	int dependencies_at = -1;
+	for (int i = 0; i < lines.size(); i++) {
+		const String line = lines[i].strip_edges();
+		if (line == "[dependencies]") {
+			dependencies_at = i;
+			continue;
+		}
+		if (line.begins_with("godot-script")) {
+			has_script = true;
+		} else if (line.begins_with("godot")) {
+			has_godot = true;
+		}
+	}
+
+	Vector<String> additions;
+	if (uses_script && !has_script) {
+		const String script_dep = _script_dependency_line();
+		if (script_dep.is_empty()) {
+			WARN_PRINT("Rust: the sources use godot_script but the module's support crate was not found; add godot-script to Cargo.toml manually.");
+		} else {
+			additions.push_back(script_dep);
+		}
+	}
+	if (uses_godot && !has_godot) {
+		additions.push_back(_godot_dependency_line());
+	}
+	if (additions.is_empty()) {
+		return;
+	}
+
+	if (dependencies_at < 0) {
+		lines.push_back(String());
+		lines.push_back("[dependencies]");
+		dependencies_at = lines.size() - 1;
+	}
+	int insert_at = dependencies_at + 1;
+	for (const String &addition : additions) {
+		lines.insert(insert_at, addition);
+		insert_at++;
+	}
+
+	String content;
+	for (const String &line : lines) {
+		content += line + "\n";
+	}
+	Ref<FileAccess> out = FileAccess::open(manifest, FileAccess::WRITE, &err);
+	if (err == OK) {
+		out->store_string(content);
+		print_line("Rust: added the missing dependencies to Cargo.toml.");
+	}
+}
+
+void RustProject::sync_crate() {
+	sync_cargo_manifest();
+	sync_crate_modules();
+}
+
 void RustProject::register_editor_settings() {
 #ifdef TOOLS_ENABLED
 	if (EditorSettings::get_singleton() == nullptr) {
@@ -417,19 +541,8 @@ Error RustProject::scaffold_project(const String &p_project_dir_global, const St
 	err = DirAccess::make_dir_recursive_absolute(data_dir);
 	ERR_FAIL_COND_V_MSG(err != OK, err, vformat("Cannot create '%s'.", data_dir));
 
-	const String vendor_dir = get_vendor_dir();
-	String godot_dep;
-	String script_dep;
-	if (!vendor_dir.is_empty() && DirAccess::dir_exists_absolute(vendor_dir.path_join("godot"))) {
-		godot_dep = vformat("godot = { path = \"%s\", features = [\"api-custom-json\"] }", vendor_dir.path_join("godot").replace("\\", "/"));
-		// godot-script ships with the engine and provides attachable scripts.
-		String support_dir = vendor_dir.get_base_dir().get_base_dir().path_join("support/godot-script");
-		if (FileAccess::exists(support_dir.path_join("Cargo.toml"))) {
-			script_dep = vformat("godot-script = { path = \"%s\" }", support_dir.replace("\\", "/"));
-		}
-	} else {
-		godot_dep = "godot = { version = \"0.5\", features = [\"api-custom-json\"] }";
-	}
+	const String godot_dep = _godot_dependency_line();
+	const String script_dep = _script_dependency_line();
 
 	const String cargo_toml = vformat(R"TOML([package]
 name = "%s"

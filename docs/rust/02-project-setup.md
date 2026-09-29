@@ -76,6 +76,9 @@ pub fn register_scripts() {
 
 > 在编辑器里**新建脚本**时，上面两行（`mod` 与 `register`）会自动加进 `src/lib.rs`，
 > 不需要手写。
+>
+> 老项目（在这套功能之前创建的）在打开编辑器时也会被自动补齐：`src/lib.rs` 的 `mod`、
+> `register` 调用，以及 `Cargo.toml` 里缺失的 `godot` / `godot-script` 依赖。
 
 ## 5. 常用设置
 

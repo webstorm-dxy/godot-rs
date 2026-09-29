@@ -27,6 +27,25 @@
 
 `CARGO_NET_OFFLINE=true` 可以让 cargo 完全用本地缓存（前提是已经 `cargo fetch` 过）。
 
+## `error[E0433]: cannot find module or crate godot_script`
+
+项目是在这套模块支持「可挂载脚本」之前创建的，`Cargo.toml` 里只有 `godot`，没有
+`godot-script` 依赖。
+
+**现在打开一次编辑器就会自动补上**（模块会扫描 `src/*.rs`，发现用到 `godot::` /
+`godot_script::` 且清单里缺依赖时写入，日志会出现 `Rust: added the missing dependencies
+to Cargo.toml.`）。
+
+也可以手动加（注意路径按你的引擎位置调整）：
+
+```toml
+[dependencies]
+godot = { path = "<引擎>/modules/rust/vendor/gdext/godot", features = ["api-custom-json"] }
+godot-script = { path = "<引擎>/modules/rust/support/godot-script" }
+```
+
+顺带一提：同一个机制也会补 `godot`（如果清单里连它都缺）。
+
 ## 编辑器相关
 
 ### 创建 Rust 脚本时出现下面三条之一

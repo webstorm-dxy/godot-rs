@@ -100,7 +100,7 @@ void RustEditorPlugin::_check_project() {
 	}
 
 	RustBindings::ensure();
-	RustProject::sync_crate_modules();
+	RustProject::sync_crate();
 
 	// Language server: completion, hover, go-to-definition and inline diagnostics.
 	if ((bool)GLOBAL_GET("rust/lsp/enabled")) {

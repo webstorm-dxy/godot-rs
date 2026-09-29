@@ -62,7 +62,7 @@ Error ResourceFormatSaverRustScript::save(const Ref<Resource> &p_resource, const
 #ifdef TOOLS_ENABLED
 	// Keep the crate root in sync with the scripts on disk (mod declarations and
 	// registrations); this also heals projects created before the feature.
-	RustProject::sync_crate_modules();
+	RustProject::sync_crate();
 #endif // TOOLS_ENABLED
 
 	script->set_path(p_path, true);
