@@ -15,7 +15,7 @@ Godot 的一等语言，用法尽量贴近 GDScript。
 | --- | --- |
 | [01-installation.md](01-installation.md) | 编译带 Rust 模块的编辑器、环境要求 |
 | [02-project-setup.md](02-project-setup.md) | 新建项目、目录结构、设置项 |
-| [03-writing-scripts.md](03-writing-scripts.md) | 写第一个可挂载的 Rust 脚本：属性、生命周期 |
+| [03-writing-scripts.md](03-writing-scripts.md) | 写第一个可挂载的 Rust 脚本：属性、方法、信号、生命周期 |
 | [04-editor-workflow.md](04-editor-workflow.md) | 编辑器里的完整工作流：附加脚本、构建、运行、错误定位 |
 | [05-troubleshooting.md](05-troubleshooting.md) | 常见报错与排查 |
 | [06-architecture.md](06-architecture.md) | 模块内部原理、当前支持范围与路线图 |
@@ -41,5 +41,5 @@ Godot 的一等语言，用法尽量贴近 GDScript。
 | --- | --- |
 | 可挂载脚本（script） | 挂在**已有节点**上的逻辑，类似 `.gd` 文件；一个 `.rs` 文件对应一个脚本类 |
 | 节点类型（node class） | 自己就是一种节点（出现在“添加节点”对话框），由 `#[derive(GodotClass)]` 定义 |
-| 描述符（descriptor） | Rust 侧注册给引擎的“类名 / 基类 / 属性 / 生命周期”信息 |
+| 描述符（descriptor） | Rust 侧注册给引擎的“类名 / 基类 / 属性 / 方法 / 信号”信息，编辑器据此显示检视面板和信号列表 |
 | 构建集成 | 编辑器调用 `cargo build`、把错误显示成可点击列表的整套机制 |

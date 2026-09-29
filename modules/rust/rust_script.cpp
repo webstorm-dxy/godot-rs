@@ -56,6 +56,60 @@ StringName RustScript::get_doc_class_name() const {
 }
 #endif
 
+bool RustScript::has_method(const StringName &p_method) const {
+	RustScriptRegistry::ScriptType type;
+	if (!_rust_script_lookup(path_cache, type)) {
+		return false;
+	}
+	return type.find_method(p_method).name != StringName();
+}
+
+MethodInfo RustScript::get_method_info(const StringName &p_method) const {
+	RustScriptRegistry::ScriptType type;
+	if (!_rust_script_lookup(path_cache, type)) {
+		return MethodInfo();
+	}
+	return type.find_method(p_method);
+}
+
+void RustScript::get_script_method_list(List<MethodInfo> *p_list) const {
+	RustScriptRegistry::ScriptType type;
+	if (!_rust_script_lookup(path_cache, type)) {
+		return;
+	}
+	for (const MethodInfo &method : type.methods) {
+		p_list->push_back(method);
+	}
+}
+
+void RustScript::get_script_property_list(List<PropertyInfo> *p_list) const {
+	RustScriptRegistry::ScriptType type;
+	if (!_rust_script_lookup(path_cache, type)) {
+		return;
+	}
+	for (const PropertyInfo &property : type.properties) {
+		p_list->push_back(property);
+	}
+}
+
+bool RustScript::has_script_signal(const StringName &p_signal) const {
+	RustScriptRegistry::ScriptType type;
+	if (!_rust_script_lookup(path_cache, type)) {
+		return false;
+	}
+	return type.find_signal(p_signal).name != StringName();
+}
+
+void RustScript::get_script_signal_list(List<MethodInfo> *r_signals) const {
+	RustScriptRegistry::ScriptType type;
+	if (!_rust_script_lookup(path_cache, type)) {
+		return;
+	}
+	for (const MethodInfo &signal : type.signals) {
+		r_signals->push_back(signal);
+	}
+}
+
 ScriptInstance *RustScript::instance_create(Object *p_this) {
 	RustScriptRegistry::ScriptType type;
 	if (!_rust_script_lookup(path_cache, type) || type.create_fn == 0) {
@@ -81,9 +135,19 @@ ScriptInstance *RustScript::instance_create(Object *p_this) {
 
 PlaceHolderScriptInstance *RustScript::placeholder_instance_create(Object *p_this) {
 #ifdef TOOLS_ENABLED
-	// Exporting property lists for unbuilt projects would require a descriptor
-	// cache; until then placeholders simply carry no properties.
-	return memnew(PlaceHolderScriptInstance(RustLanguage::get_singleton(), Ref<Script>(this), p_this));
+	// The placeholder carries the properties known so far (the ones the library
+	// registered last time), so the inspector can show a script that has not been
+	// built yet instead of an empty list.
+	PlaceHolderScriptInstance *placeholder = memnew(PlaceHolderScriptInstance(RustLanguage::get_singleton(), Ref<Script>(this), p_this));
+	RustScriptRegistry::ScriptType type;
+	if (_rust_script_lookup(path_cache, type)) {
+		List<PropertyInfo> properties;
+		for (const PropertyInfo &property : type.properties) {
+			properties.push_back(property);
+		}
+		placeholder->update(properties, HashMap<StringName, Variant>());
+	}
+	return placeholder;
 #else
 	return nullptr;
 #endif

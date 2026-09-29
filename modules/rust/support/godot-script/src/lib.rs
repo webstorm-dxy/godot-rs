@@ -60,13 +60,15 @@
 
 use std::ffi::c_void;
 
-use godot::builtin::{GString, StringName, Variant, VariantType};
+use godot::builtin::{GString, StringName, VarArray, VarDictionary, Variant, VariantType};
 use godot::classes::{Engine, Script, ScriptLanguage};
 use godot::meta::error::CallErrorType;
-use godot::meta::{FromGodot, ToGodot};
+use godot::meta::{ClassId, FromGodot, ToGodot};
 use godot::obj::script::{ScriptInstance, SiMut, create_script_instance};
-use godot::obj::{Gd, GodotClass, InstanceId, Singleton};
-use godot::register::info::{MethodInfo, PropertyInfo};
+use godot::obj::{EngineBitfield as _, EngineEnum as _, Gd, GodotClass, InstanceId, Singleton};
+use godot::register::info::{
+    MethodFlags, MethodInfo, PropertyHintInfo, PropertyInfo, PropertyUsageFlags,
+};
 
 pub mod prelude {
     //! Everything a script file needs on top of `godot::prelude`.
@@ -74,11 +76,152 @@ pub mod prelude {
     //! Only the names that `godot::prelude` does not already export are listed,
     //! so `use godot::prelude::*;` and `use godot_script::prelude::*;` can be
     //! combined without ambiguous glob imports.
-    pub use crate::{RustScript, register_script};
+    pub use crate::{RustScript, ScriptArgument, ScriptMethod, ScriptSignal, register_script};
+    pub use godot::meta::error::CallErrorType;
     pub use godot::register::info::PropertyInfo;
 }
 
+/// One parameter of a script method or signal.
+#[derive(Clone, Debug)]
+pub struct ScriptArgument {
+    /// Name shown in the editor and in error messages.
+    pub name: &'static str,
+    /// Godot type of the value, e.g. VariantType::FLOAT.
+    pub variant_type: VariantType,
+}
+
+impl ScriptArgument {
+    pub fn new(name: &'static str, variant_type: VariantType) -> Self {
+        Self { name, variant_type }
+    }
+}
+
+/// A method other scripts can call on the node.
+///
+/// Declare it in [`RustScript::methods`] and do the actual work in
+/// [`RustScript::call_method`]:
+///
+/// ```ignore
+/// fn methods() -> Vec<ScriptMethod> {
+///     vec![ScriptMethod::new("jump").arg("height", VariantType::FLOAT)]
+/// }
+///
+/// fn call_method(&mut self, name: &str, args: &[&Variant]) -> Result<Variant, CallErrorType> {
+///     match name {
+///         "jump" => {
+///             let height = args.first().map_or(2.0, |v| f32::from_variant(v));
+///             Ok((self.height + height).to_variant())
+///         }
+///         _ => Err(CallErrorType::InvalidMethod),
+///     }
+/// }
+/// ```
+///
+/// GDScript can then write `node.jump(4.0)`, and the editor lists the method
+/// like it lists a function of a GDScript file.
+#[derive(Clone, Debug)]
+pub struct ScriptMethod {
+    /// Name used by call() and has_method().
+    pub name: &'static str,
+    /// Parameters, in call order.
+    pub arguments: Vec<ScriptArgument>,
+    /// Value returned by the method; VariantType::NIL for nothing.
+    pub return_type: VariantType,
+    /// Const methods may be called on a read-only instance.
+    pub is_const: bool,
+}
+
+impl ScriptMethod {
+    pub fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            arguments: Vec::new(),
+            return_type: VariantType::NIL,
+            is_const: false,
+        }
+    }
+
+    /// Adds one parameter.
+    pub fn arg(mut self, name: &'static str, variant_type: VariantType) -> Self {
+        self.arguments.push(ScriptArgument::new(name, variant_type));
+        self
+    }
+
+    /// Sets the return type.
+    pub fn returns(mut self, variant_type: VariantType) -> Self {
+        self.return_type = variant_type;
+        self
+    }
+
+    /// Marks the method as const.
+    pub fn as_const(mut self) -> Self {
+        self.is_const = true;
+        self
+    }
+
+    /// The gdext description the engine reads from a script instance.
+    fn to_method_info(&self) -> MethodInfo {
+        MethodInfo {
+            id: 0,
+            method_name: StringName::from(self.name),
+            class_name: ClassId::none(),
+            return_type: PropertyInfo {
+                variant_type: self.return_type,
+                class_name: StringName::default(),
+                property_name: StringName::default(),
+                hint_info: PropertyHintInfo::none(),
+                usage: PropertyUsageFlags::DEFAULT,
+            },
+            arguments: self
+                .arguments
+                .iter()
+                .map(|argument| PropertyInfo {
+                    variant_type: argument.variant_type,
+                    class_name: StringName::default(),
+                    property_name: StringName::from(argument.name),
+                    hint_info: PropertyHintInfo::none(),
+                    usage: PropertyUsageFlags::DEFAULT,
+                })
+                .collect(),
+            default_arguments: Vec::new(),
+            flags: if self.is_const {
+                MethodFlags::CONST
+            } else {
+                MethodFlags::DEFAULT
+            },
+        }
+    }
+}
+
+/// A signal the script declares, e.g. `signal jumped(height: float)`.
+///
+/// Signals become visible to connect() and in the editor's signal dock, and the
+/// script can emit them with `owner.emit_signal("jumped", &[height.to_variant()])`.
+#[derive(Clone, Debug)]
+pub struct ScriptSignal {
+    /// Signal name.
+    pub name: &'static str,
+    /// Parameters carried by the signal.
+    pub arguments: Vec<ScriptArgument>,
+}
+
+impl ScriptSignal {
+    pub fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            arguments: Vec::new(),
+        }
+    }
+
+    /// Adds one parameter.
+    pub fn arg(mut self, name: &'static str, variant_type: VariantType) -> Self {
+        self.arguments.push(ScriptArgument::new(name, variant_type));
+        self
+    }
+}
+
 /// A Rust type that can be attached to a node as a script.
+
 ///
 /// Only [`RustScript::new`] and the two class name constants are required; every
 /// other callback has a sensible default.
@@ -111,6 +254,35 @@ pub trait RustScript: Sized + 'static {
     /// Writes one of [`RustScript::properties`].
     fn set_property(&mut self, _name: &str, _value: &Variant) -> bool {
         false
+    }
+
+    /// Methods that other scripts and the editor can call on the node.
+    ///
+    /// The list is what the editor shows and what `has_method()` answers; the
+    /// actual work happens in [`RustScript::call_method`].
+    fn methods() -> Vec<ScriptMethod> {
+        Vec::new()
+    }
+
+    /// Runs one of [`RustScript::methods`].
+    ///
+    /// Return [`CallErrorType::InvalidMethod`] for names that are not yours, so
+    /// the engine can report the usual error.
+    fn call_method(
+        &mut self,
+        _name: &str,
+        _args: &[&Variant],
+    ) -> Result<Variant, CallErrorType> {
+        Err(CallErrorType::InvalidMethod)
+    }
+
+    /// Signals the script declares.
+    ///
+    /// They show up in the editor's signal list and can be connected with
+    /// `connect()`; emit them from Rust with
+    /// `owner.emit_signal("jumped", &[height.to_variant()])`.
+    fn signals() -> Vec<ScriptSignal> {
+        Vec::new()
     }
 
     /// Called when the node is ready (its children entered the tree).
@@ -173,7 +345,10 @@ impl<T: RustScript> ScriptInstance for ScriptInstanceHandle<T> {
     }
 
     fn get_method_list(&self) -> Vec<MethodInfo> {
-        Vec::new()
+        T::methods()
+            .iter()
+            .map(|method| method.to_method_info())
+            .collect()
     }
 
     fn call(
@@ -181,15 +356,16 @@ impl<T: RustScript> ScriptInstance for ScriptInstanceHandle<T> {
         method: StringName,
         args: &[&Variant],
     ) -> Result<Variant, CallErrorType> {
+        let name = method.to_string();
         let delta = args.first().map(|value| f64::from_variant(value)).unwrap_or(0.0);
 
-        match method.to_string().as_str() {
+        match name.as_str() {
             "_ready" => this.user.ready(),
             "_process" => this.user.process(delta),
             "_physics_process" => this.user.physics_process(delta),
             "_enter_tree" => this.user.enter_tree(),
             "_exit_tree" => this.user.exit_tree(),
-            _ => return Err(CallErrorType::InvalidMethod),
+            _ => return this.user.call_method(&name, args),
         }
 
         Ok(Variant::nil())
@@ -202,6 +378,7 @@ impl<T: RustScript> ScriptInstance for ScriptInstanceHandle<T> {
     fn has_method(&self, method: StringName) -> bool {
         let method = method.to_string();
         LIFECYCLE_METHODS.contains(&method.as_str())
+            || T::methods().iter().any(|user| user.name == method)
     }
 
     fn get_script(&self) -> &Gd<Script> {
@@ -250,8 +427,12 @@ impl<T: RustScript> ScriptInstance for ScriptInstanceHandle<T> {
         false
     }
 
-    fn get_method_argument_count(&self, _method: StringName) -> Option<u32> {
-        None
+    fn get_method_argument_count(&self, method: StringName) -> Option<u32> {
+        let name = method.to_string();
+        T::methods()
+            .iter()
+            .find(|user| user.name == name)
+            .map(|user| user.arguments.len() as u32)
     }
 }
 
@@ -261,6 +442,8 @@ extern "C" fn create_instance<T: RustScript>(owner_id: i64, script_id: i64, lang
     let script = Gd::<Script>::from_instance_id(InstanceId::from_i64(script_id));
     let language = Gd::<ScriptLanguage>::from_instance_id(InstanceId::from_i64(language_id));
 
+    // Signals are declared on the script (see RustScript::signals), exactly like
+    // GDScript ones: the engine consults the script when connecting or emitting.
     let user = T::new(owner.clone());
     let handle = ScriptInstanceHandle::<T> {
         owner,
@@ -272,6 +455,64 @@ extern "C" fn create_instance<T: RustScript>(owner_id: i64, script_id: i64, lang
     // SAFETY: the owner outlives the returned instance, and Godot releases the
     // instance through the info table built by `create_script_instance`.
     unsafe { create_script_instance(handle, owner_for_instance::<T>(owner_id)) }.ptr()
+}
+
+/// One method/signal parameter, in the shape `Object::add_user_signal` expects.
+fn argument_dictionary(argument: &ScriptArgument) -> VarDictionary {
+    let mut entry = VarDictionary::new();
+    entry.set("name", &argument.name.to_variant());
+    entry.set("type", &(argument.variant_type.ord() as i64).to_variant());
+    entry
+}
+
+/// The script's exported properties, as the engine registry stores them.
+fn properties_dictionary<T: RustScript>() -> VarArray {
+    let mut array = VarArray::new();
+    for property in T::properties() {
+        let mut entry = VarDictionary::new();
+        entry.set("name", &property.property_name.to_string().to_variant());
+        entry.set("type", &(property.variant_type.ord() as i64).to_variant());
+        entry.set("class_name", &property.class_name.to_string().to_variant());
+        entry.set("hint", &(property.hint_info.hint.ord() as i64).to_variant());
+        entry.set("hint_string", &property.hint_info.hint_string.to_variant());
+        entry.set("usage", &(property.usage.ord() as i64).to_variant());
+        array.push(&entry);
+    }
+    array
+}
+
+/// The script's callable methods, as the engine registry stores them.
+fn methods_dictionary<T: RustScript>() -> VarArray {
+    let mut array = VarArray::new();
+    for method in T::methods() {
+        let mut entry = VarDictionary::new();
+        entry.set("name", &method.name.to_variant());
+        entry.set("return_type", &(method.return_type.ord() as i64).to_variant());
+        entry.set("is_const", &method.is_const.to_variant());
+        let mut arguments = VarArray::new();
+        for argument in &method.arguments {
+            arguments.push(&argument_dictionary(argument));
+        }
+        entry.set("args", &arguments.to_variant());
+        array.push(&entry);
+    }
+    array
+}
+
+/// The script's signals, as the engine registry stores them.
+fn signals_dictionary<T: RustScript>() -> VarArray {
+    let mut array = VarArray::new();
+    for signal in T::signals() {
+        let mut entry = VarDictionary::new();
+        entry.set("name", &signal.name.to_variant());
+        let mut arguments = VarArray::new();
+        for argument in &signal.arguments {
+            arguments.push(&argument_dictionary(argument));
+        }
+        entry.set("args", &arguments.to_variant());
+        array.push(&entry);
+    }
+    array
 }
 
 fn owner_for_instance<T: RustScript>(owner_id: i64) -> Gd<T::Base> {
@@ -291,6 +532,13 @@ pub fn register<T: RustScript>(file_path: &str) {
         return;
     };
 
+    // The engine keeps this descriptor so the editor can list the script's
+    // class, base type, properties, methods and signals without loading it.
+    let mut descriptor = VarDictionary::new();
+    descriptor.set("properties", &properties_dictionary::<T>().to_variant());
+    descriptor.set("methods", &methods_dictionary::<T>().to_variant());
+    descriptor.set("signals", &signals_dictionary::<T>().to_variant());
+
     registry.call(
         "register_script_type",
         &[
@@ -299,6 +547,7 @@ pub fn register<T: RustScript>(file_path: &str) {
             T::BASE_NAME.to_variant(),
             T::IS_TOOL.to_variant(),
             create_fn.to_variant(),
+            descriptor.to_variant(),
         ],
     );
 

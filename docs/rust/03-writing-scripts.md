@@ -120,7 +120,79 @@ impl RustScript for Player {
 它们和 GDScript 的 `_ready` / `_process` / `_physics_process` / `_enter_tree` /
 `_exit_tree` 一一对应；引擎调用 `has_method` + `call` 时分发到这些方法。
 
-## 5. 拿到节点自己
+## 5. 给 GDScript / 编辑器暴露方法
+
+`methods()` 声明有哪些方法，`call_method()` 真正执行。声明之后，GDScript 里就能写
+`$Player.jump(5.0)`，编辑器的 `has_method()` / `get_method_list()` / 自动补全也会看到它们。
+
+```rust
+impl RustScript for Player {
+    // ...
+    fn methods() -> Vec<ScriptMethod> {
+        vec![
+            ScriptMethod::new("jump")
+                .arg("height", VariantType::FLOAT)
+                .returns(VariantType::FLOAT),
+            ScriptMethod::new("reset"), // 无参数、无返回值
+        ]
+    }
+
+    fn call_method(&mut self, name: &str, args: &[&Variant]) -> Result<Variant, CallErrorType> {
+        match name {
+            "jump" => {
+                let height = args.first().map_or(2.0, |value| f32::from_variant(value));
+                Ok((self.speed + height).to_variant())
+            }
+            "reset" => {
+                self.speed = 100.0;
+                Ok(Variant::nil())
+            }
+            // 不是自己的方法就交还给引擎，让它照常报“方法不存在”。
+            _ => Err(CallErrorType::InvalidMethod),
+        }
+    }
+}
+```
+
+- 参数按声明顺序从 `args` 里取：`args.first()`、`args.get(1)`；
+- 有返回值用 `Ok(value.to_variant())`，没有返回值用 `Ok(Variant::nil())`；
+- `methods()` 和 `call_method()` 的名字必须对得上，漏一个就会出现“明明写了却调不到”；
+- `.as_const()` 表示该方法可以在只读实例上调用（和 GDScript 的 `const` 方法一致）。
+
+## 6. 声明信号
+
+```rust
+impl RustScript for Player {
+    // ...
+    fn signals() -> Vec<ScriptSignal> {
+        vec![ScriptSignal::new("jumped").arg("height", VariantType::FLOAT)]
+    }
+
+    fn call_method(&mut self, name: &str, args: &[&Variant]) -> Result<Variant, CallErrorType> {
+        match name {
+            "do_jump" => {
+                let height = 5.0;
+                // 参数列表和 GDScript 的 emit_signal 一样。
+                self.owner.clone().emit_signal("jumped", &[height.to_variant()]);
+                Ok(Variant::nil())
+            }
+            _ => Err(CallErrorType::InvalidMethod),
+        }
+    }
+}
+```
+
+GDScript 侧和普通信号完全一样：
+
+```gdscript
+player.jumped.connect(_on_player_jumped)
+# 等价写法：player.connect("jumped", Callable(self, "_on_player_jumped"))
+print(player.has_signal("jumped"))   # true
+```
+
+编辑器里右侧的 **Node → Signals** 面板同样会列出它并可以连接。和 GDScript 一致：
+**没有人连接的信号，发射时不会报错，也不会有任何效果**。
+## 7. 拿到节点自己
 
 `new(owner)` 里的 `owner` 就是这个脚本挂着的节点，把它存下来即可：
 
@@ -134,7 +206,7 @@ fn process(&mut self, delta: f64) {
 
 `Gd<Node2D>::clone()` 只是增加引用（不会复制节点），放心用。
 
-## 6. 工具脚本（编辑器里也运行）
+## 8. 工具脚本（编辑器里也运行）
 
 ```rust
 impl RustScript for Player {
@@ -146,7 +218,7 @@ impl RustScript for Player {
 > 当前版本工具脚本的实例化路径已打通，但编辑器内的属性刷新/撤销集成还在路线图上，
 > 见 [06-architecture.md](06-architecture.md)。
 
-## 7. 命名规则（很重要）
+## 9. 命名规则（很重要）
 
 | 项 | 规则 | 例子 |
 | --- | --- | --- |
@@ -170,7 +242,7 @@ RustLanguage.is_valid_module_name("my-script")  # false
 `mod` 声明与注册调用不需要手写：保存脚本时、以及每次打开编辑器时，模块都会扫描 `src/*.rs`
 并补齐（注册调用仅当文件里出现 `register_script!` 时才会加），所以旧项目也会自动修好。
 
-## 8. 一个脚本一个类
+## 10. 一个脚本一个类
 
 - 一个 `.rs` 文件里放**一个** `register_script!`；
 - 一个文件里多个类时只有被注册的那个能挂载；

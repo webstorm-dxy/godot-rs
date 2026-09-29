@@ -12,7 +12,8 @@
 //   * the res:// path of the .rs file it was compiled from,
 //   * the script class name and the Godot base class it extends,
 //   * whether it is a tool script,
-//   * a function pointer that creates the script instance for a given object.
+//   * a function pointer that creates the script instance for a given object,
+//   * a descriptor with the exported properties, callable methods and signals.
 //
 // The instance pointer returned by that function is an engine
 // `GDExtensionScriptInstance` created by `script_instance_create3`, which is
@@ -27,14 +28,22 @@ public:
 		String base;
 		bool is_tool = false;
 		int64_t create_fn = 0;
+		Vector<PropertyInfo> properties;
+		Vector<MethodInfo> methods;
+		Vector<MethodInfo> signals;
+
+		// The method or signal called `p_name`, or an empty MethodInfo.
+		MethodInfo find_method(const StringName &p_name) const;
+		MethodInfo find_signal(const StringName &p_name) const;
 	};
 
 	static RustScriptRegistry *get_singleton();
 	static void create_singleton();
 	static void destroy_singleton();
 
-	// Called from Rust; `p_create_fn` is a `extern "C" fn(i64, i64, i64) -> void *`.
-	void register_script_type(const String &p_path, const String &p_class_name, const String &p_base, bool p_is_tool, int64_t p_create_fn);
+	// Called from Rust; `p_create_fn` is a `extern "C" fn(i64, i64, i64) -> void *`,
+	// and `p_descriptor` carries the properties/methods/signals of the script.
+	void register_script_type(const String &p_path, const String &p_class_name, const String &p_base, bool p_is_tool, int64_t p_create_fn, const Dictionary &p_descriptor = Dictionary());
 	void clear_script_types();
 	bool has_script_type(const String &p_path) const;
 	bool get_script_type(const String &p_path, ScriptType &r_type) const;
