@@ -23,6 +23,8 @@ public:
 	virtual Vector<String> get_string_delimiters() const override;
 
 	virtual bool validate(const String &p_script, const String &p_path = "", List<String> *r_functions = nullptr, List<ScriptError> *r_errors = nullptr, List<Warning> *r_warnings = nullptr, HashSet<int> *r_safe_lines = nullptr) const override;
+	virtual Error complete_code(const String &p_code, const String &p_path, Object *p_owner, List<CodeCompletionOption> *r_options, bool &r_force, String &r_call_hint) override;
+	virtual Error lookup_code(const String &p_code, const String &p_symbol, const String &p_path, Object *p_owner, LookupResult &r_result) override;
 	virtual bool supports_builtin_mode() const override { return false; }
 	virtual bool can_inherit_from_file() const override { return false; }
 	virtual bool can_make_function() const override { return false; }

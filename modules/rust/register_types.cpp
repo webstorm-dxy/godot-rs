@@ -22,6 +22,7 @@
 #include "editor/project_manager/project_dialog.h"
 #include "editor/rust_build.h"
 #include "editor/rust_editor_plugin.h"
+#include "editor/rust_lsp.h"
 #include "editor/rust_project.h"
 #endif
 
@@ -105,6 +106,14 @@ void initialize_rust_module(ModuleInitializationLevel p_level) {
 		rust_build = memnew(RustBuild);
 		EditorPlugins::add_by_type<RustEditorPlugin>();
 		ProjectDialog::add_project_creation_callback(&_rust_project_created);
+
+		// rust-analyzer bridge, reachable from the editor as "RustLsp".
+		GDREGISTER_CLASS(RustLsp);
+		RustLsp::create_singleton();
+		Engine::Singleton rust_lsp_singleton("RustLsp", RustLsp::get_singleton());
+		rust_lsp_singleton.editor_only = true;
+		Engine::get_singleton()->add_singleton(rust_lsp_singleton);
+
 		RustProject::handle_cmdline();
 	}
 #endif
@@ -133,6 +142,8 @@ void uninitialize_rust_module(ModuleInitializationLevel p_level) {
 	}
 #ifdef TOOLS_ENABLED
 	else if (p_level == MODULE_INITIALIZATION_LEVEL_EDITOR) {
+		Engine::get_singleton()->remove_singleton("RustLsp");
+		RustLsp::destroy_singleton();
 		if (rust_build != nullptr) {
 			memdelete(rust_build);
 			rust_build = nullptr;

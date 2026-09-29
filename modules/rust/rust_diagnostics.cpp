@@ -11,6 +11,18 @@ void RustDiagnostics::publish(const HashMap<String, Vector<RustDiagnostic>> &p_b
 	by_file = p_by_file;
 }
 
+void RustDiagnostics::set_file_diagnostics(const String &p_path, const Vector<RustDiagnostic> &p_diagnostics) {
+	if (p_path.is_empty()) {
+		return;
+	}
+	MutexLock lock(mutex);
+	if (p_diagnostics.is_empty()) {
+		by_file.erase(p_path);
+	} else {
+		by_file[p_path] = p_diagnostics;
+	}
+}
+
 void RustDiagnostics::clear() {
 	MutexLock lock(mutex);
 	by_file.clear();

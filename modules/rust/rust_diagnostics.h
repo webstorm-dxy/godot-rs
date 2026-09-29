@@ -35,6 +35,8 @@ public:
 	static RustDiagnostics *get_singleton();
 
 	void publish(const HashMap<String, Vector<RustDiagnostic>> &p_by_file);
+	// Replaces the diagnostics of a single file (used by the language server).
+	void set_file_diagnostics(const String &p_path, const Vector<RustDiagnostic> &p_diagnostics);
 	void clear();
 	void fill_script_errors(const String &p_path, List<ScriptLanguage::ScriptError> *r_errors, List<ScriptLanguage::Warning> *r_warnings) const;
 	int get_error_count() const;

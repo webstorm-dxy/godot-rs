@@ -4,6 +4,11 @@
 #include "rust_script.h"
 #include "rust_script_registry.h"
 
+#ifdef TOOLS_ENABLED
+#include "editor/rust_lsp.h"
+#include "core/io/resource_loader.h"
+#endif
+
 RustLanguage *RustLanguage::singleton = nullptr;
 
 static const char *const rust_keywords[] = {
@@ -63,7 +68,69 @@ String RustLanguage::validate_path(const String &p_path) const {
 	return String();
 }
 
+// 0-based position of the caret: the editor hands `complete_code` the text up to
+// the cursor, so the end of that buffer is where the request belongs.
+static void _caret_at_end(const String &p_code, int &r_line, int &r_column) {
+	r_line = 0;
+	r_column = 0;
+	for (int i = 0; i < p_code.length(); i++) {
+		if (p_code[i] == '\n') {
+			r_line++;
+			r_column = 0;
+		} else {
+			r_column++;
+		}
+	}
+}
+
+static void _position_from_offset(const String &p_code, int p_offset, int &r_line, int &r_column) {
+	r_line = 0;
+	r_column = 0;
+	for (int i = 0; i < p_offset && i < p_code.length(); i++) {
+		if (p_code[i] == '\n') {
+			r_line++;
+			r_column = 0;
+		} else {
+			r_column++;
+		}
+	}
+}
+
+#ifdef TOOLS_ENABLED
+static ScriptLanguage::CodeCompletionKind _lsp_completion_kind(int p_lsp_kind) {
+	switch (p_lsp_kind) {
+		case 7: // Class
+		case 8: // Interface
+			return ScriptLanguage::CODE_COMPLETION_KIND_CLASS;
+		case 2: // Method
+		case 3: // Function
+		case 4: // Constructor
+			return ScriptLanguage::CODE_COMPLETION_KIND_FUNCTION;
+		case 5: // Field
+		case 10: // Property
+			return ScriptLanguage::CODE_COMPLETION_KIND_MEMBER;
+		case 6: // Variable
+			return ScriptLanguage::CODE_COMPLETION_KIND_VARIABLE;
+		case 13: // Enum
+			return ScriptLanguage::CODE_COMPLETION_KIND_ENUM;
+		case 21: // Constant
+			return ScriptLanguage::CODE_COMPLETION_KIND_CONSTANT;
+		case 14: // Keyword
+			return ScriptLanguage::CODE_COMPLETION_KIND_KEYWORD;
+		default:
+			return ScriptLanguage::CODE_COMPLETION_KIND_PLAIN_TEXT;
+	}
+}
+#endif
+
 bool RustLanguage::validate(const String &p_script, const String &p_path, List<String> *r_functions, List<ScriptError> *r_errors, List<Warning> *r_warnings, HashSet<int> *r_safe_lines) const {
+#ifdef TOOLS_ENABLED
+	if (RustLsp *lsp = RustLsp::get_singleton(); lsp != nullptr && lsp->is_running() && !p_path.is_empty()) {
+		// Keep the language server's view of the buffer in sync; its diagnostics
+		// arrive asynchronously and land in RustDiagnostics.
+		lsp->sync_document(p_path, p_script);
+	}
+#endif
 	RustDiagnostics::get_singleton()->fill_script_errors(p_path, r_errors, r_warnings);
 	if (r_errors != nullptr && !r_errors->is_empty()) {
 		return false;
@@ -121,6 +188,92 @@ Ref<Script> RustLanguage::make_template(const String &p_template, const String &
 
 	script->set_source_code(source);
 	return script;
+}
+
+Error RustLanguage::complete_code(const String &p_code, const String &p_path, Object *p_owner, List<CodeCompletionOption> *r_options, bool &r_force, String &r_call_hint) {
+#ifdef TOOLS_ENABLED
+	RustLsp *lsp = RustLsp::get_singleton();
+	if (lsp == nullptr || !lsp->is_running() || p_path.is_empty() || r_options == nullptr) {
+		return ERR_UNAVAILABLE;
+	}
+
+	int line = 0;
+	int column = 0;
+	_caret_at_end(p_code, line, column);
+	lsp->sync_document(p_path, p_code);
+
+	Array items;
+	String error;
+	if (!lsp->complete(p_path, line, column, items, error)) {
+		return ERR_UNAVAILABLE;
+	}
+
+	for (int i = 0; i < items.size(); i++) {
+		Dictionary item = items[i];
+		const String label = item.get("label", String());
+		if (label.is_empty()) {
+			continue;
+		}
+		String insert = item.get("insertText", String());
+		if (insert.is_empty()) {
+			Dictionary text_edit = item.get("textEdit", Dictionary());
+			insert = text_edit.get("newText", String());
+		}
+		if (insert.is_empty()) {
+			insert = label;
+		}
+
+		CodeCompletionOption option(insert, _lsp_completion_kind((int)item.get("kind", 0)), LOCATION_OTHER, "");
+		option.display = label;
+		option.insert_text = insert;
+		r_options->push_back(option);
+	}
+	r_force = true;
+	return OK;
+#else
+	return ERR_UNAVAILABLE;
+#endif
+}
+
+Error RustLanguage::lookup_code(const String &p_code, const String &p_symbol, const String &p_path, Object *p_owner, LookupResult &r_result) {
+#ifdef TOOLS_ENABLED
+	RustLsp *lsp = RustLsp::get_singleton();
+	if (lsp == nullptr || !lsp->is_running() || p_path.is_empty() || p_symbol.is_empty()) {
+		return ERR_UNAVAILABLE;
+	}
+
+	// The editor hands us the whole buffer and the symbol name, so look for the
+	// first occurrence of that symbol to pick a position for the request.
+	const int offset = p_code.find(p_symbol);
+	if (offset == -1) {
+		return ERR_UNAVAILABLE;
+	}
+	int line = 0;
+	int column = 0;
+	_position_from_offset(p_code, offset, line, column);
+
+	String error;
+	String target_path;
+	int target_line = 0;
+	int target_column = 0;
+	if (lsp->definition(p_path, line, column, target_path, target_line, target_column, error) && !target_path.is_empty()) {
+		r_result.type = LOOKUP_RESULT_SCRIPT_LOCATION;
+		r_result.script_path = target_path;
+		r_result.location = target_line;
+		r_result.script = ResourceLoader::load(target_path, "Script");
+		r_result.description = vformat("%s:%d", target_path, target_line);
+		return OK;
+	}
+
+	String text;
+	if (lsp->hover(p_path, line, column, text, error) && !text.is_empty()) {
+		r_result.type = LOOKUP_RESULT_SCRIPT_LOCATION;
+		r_result.location = -1;
+		r_result.description = text;
+		return OK;
+	}
+#endif
+	return ERR_UNAVAILABLE;
 }
 
 void RustLanguage::get_recognized_extensions(List<String> *p_extensions) const {

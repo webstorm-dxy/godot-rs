@@ -1,6 +1,7 @@
 #include "rust_editor_plugin.h"
 
 #include "rust_build.h"
+#include "rust_lsp.h"
 #include "rust_build_panel.h"
 #include "rust_bindings.h"
 #include "rust_project.h"
@@ -99,6 +100,13 @@ void RustEditorPlugin::_check_project() {
 	}
 
 	RustBindings::ensure();
+
+	// Language server: completion, hover, go-to-definition and inline diagnostics.
+	if ((bool)GLOBAL_GET("rust/lsp/enabled")) {
+		if (RustLsp *lsp = RustLsp::get_singleton(); lsp != nullptr && !lsp->is_running()) {
+			lsp->start(RustProject::get_crate_root_global());
+		}
+	}
 
 	String lib = RustProject::find_existing_library();
 	bool need_build = lib.is_empty() || RustProject::is_library_stale(lib);

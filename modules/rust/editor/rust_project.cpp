@@ -183,6 +183,7 @@ void RustProject::register_settings() {
 	GLOBAL_DEF(PropertyInfo(Variant::BOOL, "rust/build/on_editor_startup"), true);
 	GLOBAL_DEF(PropertyInfo(Variant::STRING, "rust/build/extra_flags"), "");
 	GLOBAL_DEF(PropertyInfo(Variant::STRING, "rust/bindings_source", PROPERTY_HINT_ENUM, "vendored,crates-io"), "vendored");
+	GLOBAL_DEF(PropertyInfo(Variant::BOOL, "rust/lsp/enabled"), true);
 }
 
 void RustProject::register_editor_settings() {
@@ -195,6 +196,7 @@ void RustProject::register_editor_settings() {
 	}
 	EDITOR_DEF("rust/cargo_path", "");
 	EDITOR_DEF("rust/vendor_dir", "");
+	EDITOR_DEF("rust/rust_analyzer_path", "");
 	EDITOR_DEF("rust/skip_build_before_playing", false);
 	EDITOR_DEF("rust/show_output_panel_on_error", true);
 #endif
