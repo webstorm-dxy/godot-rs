@@ -1,0 +1,4 @@
+# The engine's root .gitignore ignores every directory named "obj" (build
+# artifacts). Vendored godot-rust sources contain a real source directory with
+# that name, and deeper .gitignore files take precedence, so re-include it.
+!gdext/godot-core/src/obj/
