@@ -60,8 +60,8 @@ struct RustGame;
 
 #[gdextension]
 unsafe impl ExtensionLibrary for RustGame {
-    fn on_level_init(level: InitLevel) {
-        if level == InitLevel::Scene {
+    fn on_stage_init(stage: InitStage) {
+        if stage == InitStage::Scene {
             register_scripts();   // 引擎加载扩展时注册所有脚本
         }
     }
@@ -79,6 +79,10 @@ pub fn register_scripts() {
 >
 > 老项目（在这套功能之前创建的）在打开编辑器时也会被自动补齐：`src/lib.rs` 的 `mod`、
 > `register` 调用，以及 `Cargo.toml` 里缺失的 `godot` / `godot-script` 依赖。
+>
+> 同时，如果 `godot` 指向的是 crates.io 的版本（会和 `godot-script` 用上两份
+> `godot-core`，编译报 E0277/E0053），构建前会自动改成引擎里的 vendored 副本；
+> 你写的额外 feature 会保留。细节见 [05 · 常见问题](05-troubleshooting.md)。
 
 ## 5. 常用设置
 

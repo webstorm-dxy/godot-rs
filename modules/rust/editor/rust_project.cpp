@@ -315,17 +315,16 @@ void RustProject::sync_crate_modules() {
 	}
 }
 
-// Dependency lines used both by the scaffolder and by the self-healing manifest
-// sync, so a project created by an older build keeps working.
-static String _godot_dependency_line() {
+// Where the vendored crates live (empty when they cannot be found).
+static String _vendored_godot_path() {
 	const String vendor_dir = RustProject::get_vendor_dir();
-	if (!vendor_dir.is_empty() && DirAccess::dir_exists_absolute(vendor_dir.path_join("godot"))) {
-		return vformat("godot = { path = \"%s\", features = [\"api-custom-json\"] }", vendor_dir.path_join("godot").replace("\\", "/"));
+	if (vendor_dir.is_empty() || !DirAccess::dir_exists_absolute(vendor_dir.path_join("godot"))) {
+		return String();
 	}
-	return "godot = { version = \"0.5\", features = [\"api-custom-json\"] }";
+	return vendor_dir.path_join("godot").replace("\\", "/");
 }
 
-static String _script_dependency_line() {
+static String _vendored_script_path() {
 	const String vendor_dir = RustProject::get_vendor_dir();
 	if (vendor_dir.is_empty()) {
 		return String();
@@ -334,7 +333,90 @@ static String _script_dependency_line() {
 	if (!FileAccess::exists(support_dir.path_join("Cargo.toml"))) {
 		return String();
 	}
-	return vformat("godot-script = { path = \"%s\" }", support_dir.replace("\\", "/"));
+	return support_dir.replace("\\", "/");
+}
+
+// Finds an array value such as `features = [ ... ]` and reports its brackets.
+static bool _find_array_value(const String &p_line, const String &p_key, int &r_open, int &r_close) {
+	int at = p_line.find(p_key);
+	while (at >= 0) {
+		// "default-features" also contains "features", so the key must start a word.
+		const char32_t before = at > 0 ? p_line[at - 1] : ' ';
+		int i = at + p_key.length();
+		if (before != '-' && before != '_' && before != '"') {
+			while (i < p_line.length() && p_line[i] == ' ') {
+				i++;
+			}
+			if (i < p_line.length() && p_line[i] == '=') {
+				i++;
+				while (i < p_line.length() && p_line[i] == ' ') {
+					i++;
+				}
+				if (i < p_line.length() && p_line[i] == '[') {
+					const int close = p_line.find("]", i);
+					if (close > i) {
+						r_open = i;
+						r_close = close;
+						return true;
+					}
+				}
+			}
+		}
+		at = p_line.find(p_key, at + 1);
+	}
+	return false;
+}
+
+// Rewrites a godot dependency so the bindings come from this engine build,
+// keeping the features and flags the author had asked for.
+static String _godot_dependency_line(const String &p_existing = String()) {
+	const String path = _vendored_godot_path();
+	if (path.is_empty()) {
+		return "godot = { version = \"0.5\", features = [\"api-custom-json\"] }";
+	}
+	String list = "\"api-custom-json\"";
+	int open = 0;
+	int close = 0;
+	if (_find_array_value(p_existing, "features", open, close)) {
+		for (const String &feature : p_existing.substr(open + 1, close - open - 1).split(",")) {
+			const String name = feature.strip_edges().trim_prefix("\"").trim_suffix("\"");
+			if (!name.is_empty() && name != "api-custom-json") {
+				list += ", \"" + name + "\"";
+			}
+		}
+	}
+	String extras;
+	for (const String &key : { String("default-features"), String("optional") }) {
+		const int at = p_existing.find(key);
+		if (at < 0) {
+			continue;
+		}
+		const int eq = p_existing.find("=", at);
+		if (eq < 0) {
+			continue;
+		}
+		int end = p_existing.find(",", eq);
+		const int brace = p_existing.find("}", eq);
+		if (end < 0 || (brace >= 0 && brace < end)) {
+			end = brace;
+		}
+		if (end < 0) {
+			continue;
+		}
+		const String value = p_existing.substr(eq + 1, end - eq - 1).strip_edges();
+		if (!value.is_empty()) {
+			extras += vformat(", %s = %s", key, value);
+		}
+	}
+	return vformat("godot = { path = \"%s\", features = [%s]%s }", path, list, extras);
+}
+
+static String _script_dependency_line() {
+	const String path = _vendored_script_path();
+	if (path.is_empty()) {
+		return String();
+	}
+	return vformat("godot-script = { path = \"%s\" }", path);
 }
 
 void RustProject::sync_cargo_manifest() {
@@ -380,9 +462,14 @@ void RustProject::sync_cargo_manifest() {
 	}
 	file->close();
 
+	const String godot_path = _vendored_godot_path();
+	const String script_path = _vendored_script_path();
+
 	bool has_godot = false;
 	bool has_script = false;
 	int dependencies_at = -1;
+	int godot_at = -1;
+	int script_at = -1;
 	for (int i = 0; i < lines.size(); i++) {
 		const String line = lines[i].strip_edges();
 		if (line == "[dependencies]") {
@@ -398,16 +485,37 @@ void RustProject::sync_cargo_manifest() {
 		}
 		if (line.begins_with("godot-script")) {
 			has_script = true;
+			script_at = i;
 		} else if (line.begins_with("godot")) {
 			has_godot = true;
+			godot_at = i;
 		}
 	}
 
+	bool changed = false;
 	Vector<String> additions;
+
+	// Bindings must come from this engine build: a crates.io dependency pulls in a
+	// second copy of godot-core, which breaks trait matching for scripts.
+	if (uses_godot && has_godot && !godot_path.is_empty() && godot_at >= 0 && !lines[godot_at].contains(godot_path)) {
+		lines.set(godot_at, _godot_dependency_line(lines[godot_at]));
+		changed = true;
+		print_line("Rust: pointed the godot dependency at this engine's bindings.");
+	}
+	if (uses_script && has_script && !script_path.is_empty() && script_at >= 0 && !lines[script_at].contains(script_path)) {
+		lines.set(script_at, _script_dependency_line());
+		changed = true;
+		print_line("Rust: pointed the godot-script dependency at this engine's support crate.");
+	}
+
+	if (uses_godot && has_godot && !godot_path.is_empty() && godot_at < 0) {
+		WARN_PRINT(vformat("Rust: the godot dependency is declared as a table, so it may not point at this engine's bindings. Use `godot = { path = \"%s\", features = [\"api-custom-json\"] }` instead.", godot_path));
+	}
+
 	if (uses_script && !has_script) {
 		const String script_dep = _script_dependency_line();
 		if (script_dep.is_empty()) {
-			WARN_PRINT("Rust: these sources use godot_script, but no godot-script dependency was found in Cargo.toml and the module's support crate could not be located. Add it manually, e.g. godot-script = { path = \"<engine>/modules/rust/support/godot-script\" }.");
+			WARN_PRINT("Rust: these sources use godot_script, but no godot-script dependency was found and the module's support crate could not be located. Add it manually, e.g. godot-script = { path = \"<engine>/modules/rust/support/godot-script\" }.");
 		} else {
 			additions.push_back(script_dep);
 		}
@@ -415,19 +523,21 @@ void RustProject::sync_cargo_manifest() {
 	if (uses_godot && !has_godot) {
 		additions.push_back(_godot_dependency_line());
 	}
-	if (additions.is_empty()) {
+	if (!changed && additions.is_empty()) {
 		return;
 	}
 
-	if (dependencies_at < 0) {
-		lines.push_back(String());
-		lines.push_back("[dependencies]");
-		dependencies_at = lines.size() - 1;
-	}
-	int insert_at = dependencies_at + 1;
-	for (const String &addition : additions) {
-		lines.insert(insert_at, addition);
-		insert_at++;
+	if (!additions.is_empty()) {
+		if (dependencies_at < 0) {
+			lines.push_back(String());
+			lines.push_back("[dependencies]");
+			dependencies_at = lines.size() - 1;
+		}
+		int insert_at = dependencies_at + 1;
+		for (const String &addition : additions) {
+			lines.insert(insert_at, addition);
+			insert_at++;
+		}
 	}
 
 	String content;
@@ -437,7 +547,9 @@ void RustProject::sync_cargo_manifest() {
 	Ref<FileAccess> out = FileAccess::open(manifest, FileAccess::WRITE, &err);
 	if (err == OK) {
 		out->store_string(content);
-		print_line("Rust: added the missing dependencies to Cargo.toml.");
+		if (!additions.is_empty()) {
+			print_line("Rust: added the missing dependencies to Cargo.toml.");
+		}
 	}
 }
 

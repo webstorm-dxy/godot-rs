@@ -46,6 +46,39 @@ godot-script = { path = "<引擎>/modules/rust/support/godot-script" }
 
 顺带一提：同一个机制也会补 `godot`（如果清单里连它都缺）。
 
+### `error[E0277]: only classes registered with Godot are allowed` / `error[E0053]` / `cannot find crate godot_script`
+
+`Cargo.toml` 里的 `godot` 指向了 **crates.io 上的 0.5**，而 `godot-script` 指向本引擎的
+目录。这样会同时引入两份 `godot-core`，trait 对不上，于是出现一堆 E0277/E0053。
+
+绑定必须来自**这套引擎**（扩展 API 版本要和引擎一致），所以编辑器会在构建前把这一行
+改写成引擎里的 vendored 副本：
+
+```toml
+godot = { path = "<引擎>/modules/rust/vendor/gdext/godot", features = ["api-custom-json"] }
+```
+
+日志里会出现 `Rust: pointed the godot dependency at this engine's bindings.`。
+你自己写的额外 feature / `default-features` / `optional` 会被保留，
+只替换依赖来源，例如原来写的是：
+
+```toml
+godot = { version = "0.5", features = ["api-custom-json", "experimental-godot-api"] }
+```
+
+改完后是：
+
+```toml
+godot = { path = "<引擎>/modules/rust/vendor/gdext/godot", features = ["api-custom-json", "experimental-godot-api"] }
+```
+
+**不要**把 `godot` 改回 crates.io 版本，也不要手动指定别的 gdext 版本。
+
+### 构建时出现 `unexpected \`cfg\` condition name: \`published_docs\``
+
+来自 vendored 的 gdext 上游代码（`godot` / `godot-cell`），只是警告，不影响构建与运行，
+可以忽略。它默认被 `[workspace.lints]` 的 `check-cfg` 关掉，作为路径依赖被引用时会漏出来。
+
 ## 编辑器相关
 
 ### 创建 Rust 脚本时出现下面三条之一

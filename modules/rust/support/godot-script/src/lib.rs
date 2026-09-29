@@ -69,12 +69,12 @@ use godot::obj::{Gd, GodotClass, InstanceId, Singleton};
 use godot::register::info::{MethodInfo, PropertyInfo};
 
 pub mod prelude {
-    //! Everything a script file usually needs.
+    //! Everything a script file needs on top of `godot::prelude`.
+    //!
+    //! Only the names that `godot::prelude` does not already export are listed,
+    //! so `use godot::prelude::*;` and `use godot_script::prelude::*;` can be
+    //! combined without ambiguous glob imports.
     pub use crate::{RustScript, register_script};
-    pub use godot::builtin::{GString, StringName, Variant, VariantType};
-    pub use godot::meta::{FromGodot, ToGodot};
-    pub use godot::obj::{Gd, GodotClass};
-    pub use godot::register::GodotClass;
     pub use godot::register::info::PropertyInfo;
 }
 
@@ -281,7 +281,7 @@ fn owner_for_instance<T: RustScript>(owner_id: i64) -> Gd<T::Base> {
 /// Registers `T` with the engine. Called by [`register_script!`].
 pub fn register<T: RustScript>(file_path: &str) {
     let path = normalize_path(file_path);
-    let create_fn = create_instance::<T> as usize as i64;
+    let create_fn = create_instance::<T> as *const () as usize as i64;
 
     let engine = Engine::singleton();
     let Some(mut registry) = engine.get_singleton("RustScriptRegistry") else {
