@@ -3,6 +3,7 @@
 #include "rust_language.h"
 #include "rust_script_registry.h"
 
+#include "core/config/engine.h"
 #include "core/io/file_access.h"
 #include "core/object/class_db.h"
 
@@ -25,7 +26,17 @@ bool RustScript::can_instantiate() const {
 	RustScriptRegistry::ScriptType type;
 	// A descriptor loaded from the script cache has no instance factory, so the
 	// script only becomes instantiable once its library has been built and loaded.
-	return valid && _rust_script_lookup(path_cache, type) && type.create_fn != 0;
+	if (!valid || !_rust_script_lookup(path_cache, type) || type.create_fn == 0) {
+		return false;
+	}
+#ifdef TOOLS_ENABLED
+	// The same rule GDScript follows: inside the editor only tool scripts run, so
+	// a plain script gets a placeholder instance instead of a live one.
+	if (!type.is_tool && (!ScriptServer::is_scripting_enabled() || Engine::get_singleton()->is_recovery_mode_hint())) {
+		return false;
+	}
+#endif
+	return true;
 }
 
 StringName RustScript::get_global_name() const {

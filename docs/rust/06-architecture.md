@@ -104,6 +104,8 @@ modules/rust/
 - 可挂载脚本：类名、基类校验、`new/ready/process/physics_process/enter_tree/exit_tree`、
   `properties/get_property/set_property`（检视面板 + 场景序列化）；
 - 方法与信号：`methods()/call_method()` 可从 GDScript 调用，`signals()` 可连接、可发射；
+- 工具脚本：`#[script(base = X, tool)]`；和 GDScript 一样，编辑器里只实例化 tool 脚本
+  （其余用占位实例，`can_instantiate()` 与 `ScriptServer::is_scripting_enabled()` 一致）；
 - 占位实例：库未构建时挂载不报错，构建后生效；
 - 描述符缓存：`.godot/rust/script_cache.json`，未构建时也能显示类名/属性/方法/信号；
 - 派生宏：`#[derive(RustScript)]`（字段、`#[export]`）+ `#[godot_script_api]`
@@ -115,7 +117,6 @@ modules/rust/
 | 项 | 说明 |
 | --- | --- |
 | RPC | `@rpc` 风格的多人同步 |
-| 工具脚本的编辑器集成 | `IS_TOOL` 已透传，属性刷新/撤销尚需打磨 |
 | 热重载 | 库重载后的类与实例状态迁移（对应计划里的 M4） |
 | 原生断点调试 | lldb-dap / CodeLLDB（M5） |
 | 导出 | 把 cdylib 打进导出产物（M6） |
