@@ -98,6 +98,9 @@ const PackedStringArray ProjectSettings::_get_supported_features() {
 #ifdef MODULE_MONO_ENABLED
 	features.append("C#");
 #endif
+#ifdef MODULE_RUST_ENABLED
+	features.append("Rust");
+#endif
 	// Allow pinning to a specific patch number or build type by marking
 	// them as supported. They're only used if the user adds them manually.
 	features.append(GODOT_VERSION_BRANCH "." _MKSTR(GODOT_VERSION_PATCH));
@@ -1244,6 +1247,24 @@ Error ProjectSettings::save_custom(const String &p_path, const CustomMap &p_cust
 			project_features.remove_at(project_features.find("C#"));
 		}
 	}
+#ifdef MODULE_RUST_ENABLED
+	// Check whether the project is configured to use Rust. When a project is
+	// being created the setting is only present in the custom map, not in the
+	// project settings yet.
+	bool rust_enabled = false;
+	if (p_custom.has("rust/enabled")) {
+		rust_enabled = (bool)p_custom["rust/enabled"];
+	} else if (has_setting("rust/enabled")) {
+		rust_enabled = (bool)get_setting("rust/enabled");
+	}
+	if (rust_enabled != project_features.has("Rust")) {
+		if (rust_enabled) {
+			project_features.append("Rust");
+		} else {
+			project_features.remove_at(project_features.find("Rust"));
+		}
+	}
+#endif // MODULE_RUST_ENABLED
 	project_features = _trim_to_supported_features(project_features);
 	set_setting("application/config/features", project_features);
 #endif // TOOLS_ENABLED

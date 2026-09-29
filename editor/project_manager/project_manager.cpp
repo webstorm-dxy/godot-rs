@@ -682,6 +682,10 @@ void ProjectManager::_open_selected_projects_check_warnings() {
 				warning_message += TTR("Warning: This project uses C#, but this build of Godot does not have\nthe Mono module. If you proceed you will not be able to use any C# scripts.\n\n");
 				unsupported_features.remove_at(i);
 				i--;
+			} else if (feature == "Rust") {
+				warning_message += TTR("Warning: This project uses Rust, but this build of Godot does not have\nthe Rust module. If you proceed you will not be able to build or use Rust code.\n\n");
+				unsupported_features.remove_at(i);
+				i--;
 			} else if (ProjectList::project_feature_looks_like_version(feature)) {
 				ask_update_backup->show();
 				migration_guide_button->show();

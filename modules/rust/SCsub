@@ -1,0 +1,15 @@
+#!/usr/bin/env python
+from misc.utility.scons_hints import *
+
+Import("env")
+Import("env_modules")
+
+env_rust = env_modules.Clone()
+
+env_rust.add_source_files(env.modules_sources, "*.cpp")
+
+# Keep the engine vendor directory in the include path so the editor can point
+# scaffolds at the vendored gdext crates without extra configuration.
+
+if env.editor_build:
+    env_rust.add_source_files(env.modules_sources, "editor/*.cpp")

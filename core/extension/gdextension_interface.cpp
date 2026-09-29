@@ -1599,6 +1599,13 @@ static GDExtensionScriptInstancePtr gdextension_object_get_script_instance(GDExt
 	return script_instance_extension->instance;
 }
 
+// Same cast as above, exposed for script language modules that create script
+// instances through the GDExtension script-instance API and have to return them
+// from `Script::instance_create()`.
+ScriptInstance *gdextension_script_instance_wrap(GDExtensionScriptInstancePtr p_instance) {
+	return (ScriptInstanceExtension *)p_instance;
+}
+
 static void gdextension_object_set_script_instance(GDExtensionObjectPtr p_object, GDExtensionScriptInstancePtr p_script_instance) {
 	ERR_FAIL_NULL(p_object);
 

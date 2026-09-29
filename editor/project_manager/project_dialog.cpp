@@ -53,6 +53,16 @@
 #include "servers/display/display_server.h"
 #include "servers/rendering/rendering_server.h"
 
+#include "modules/modules_enabled.gen.h" // For MODULE_RUST_ENABLED.
+
+static Vector<ProjectDialog::ProjectCreationCallback> project_creation_callbacks;
+
+void ProjectDialog::add_project_creation_callback(ProjectCreationCallback p_callback) {
+	if (p_callback != nullptr) {
+		project_creation_callbacks.push_back(p_callback);
+	}
+}
+
 void ProjectDialog::_set_message(const String &p_msg, MessageType p_type, InputType p_input_type) {
 	msg->set_text(p_msg);
 
@@ -595,6 +605,11 @@ void ProjectDialog::ok_pressed() {
 		initial_settings["application/config/features"] = project_features;
 		initial_settings["application/config/name"] = project_name->get_text().strip_edges();
 		initial_settings["application/config/icon"] = "res://icon.svg";
+#ifdef MODULE_RUST_ENABLED
+		if (rust_enabled != nullptr && rust_enabled->is_pressed()) {
+			initial_settings["rust/enabled"] = true;
+		}
+#endif // MODULE_RUST_ENABLED
 		ProjectSettings::CustomMap extra_settings = EditorNode::get_initial_settings();
 		for (const KeyValue<String, Variant> &extra_setting : extra_settings) {
 			// Merge with other initial settings defined above.
@@ -630,6 +645,10 @@ void ProjectDialog::ok_pressed() {
 			f->store_line("charset = utf-8");
 			f->close();
 			FileAccess::set_hidden_attribute(editor_config_path, true);
+		}
+
+		for (ProjectCreationCallback callback : project_creation_callbacks) {
+			callback(path, project_name->get_text().strip_edges());
 		}
 	}
 
@@ -1211,6 +1230,15 @@ ProjectDialog::ProjectDialog() {
 	vcs_metadata_selection->select((int)EditorVCSInterface::VCSMetadata::GIT);
 	vcs_metadata_selection->set_accessibility_name(TTRC("Version Control Metadata:"));
 	default_files_container->add_child(vcs_metadata_selection);
+#ifdef MODULE_RUST_ENABLED
+	VSeparator *rust_separator = memnew(VSeparator);
+	default_files_container->add_child(rust_separator);
+	rust_enabled = memnew(CheckButton);
+	rust_enabled->set_text(TTRC("Rust Project"));
+	rust_enabled->set_pressed(true);
+	rust_enabled->set_tooltip_text(TTRC("Generate a Rust crate (Cargo.toml, src/lib.rs and engine-matched bindings) wired to build and run from the editor."));
+	default_files_container->add_child(rust_enabled);
+#endif // MODULE_RUST_ENABLED
 	Control *spacer = memnew(Control);
 	spacer->set_h_size_flags(Control::SIZE_EXPAND_FILL);
 	default_files_container->add_child(spacer);

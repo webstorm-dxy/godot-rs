@@ -52,6 +52,11 @@ public:
 		MODE_DUPLICATE,
 	};
 
+	// External tools (such as engine modules) can hook project creation. Callbacks
+	// run after project.godot and the default project files have been written.
+	typedef void (*ProjectCreationCallback)(const String &p_project_path, const String &p_project_name);
+	static void add_project_creation_callback(ProjectCreationCallback p_callback);
+
 private:
 	enum MessageType {
 		MESSAGE_ERROR,
@@ -75,6 +80,7 @@ private:
 	ConfirmationDialog *nonempty_confirmation = nullptr;
 
 	CheckButton *create_dir = nullptr;
+	CheckButton *rust_enabled = nullptr;
 	Button *project_browse = nullptr;
 	Button *install_browse = nullptr;
 	VBoxContainer *name_container = nullptr;
