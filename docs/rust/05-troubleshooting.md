@@ -79,6 +79,21 @@ godot = { path = "<引擎>/modules/rust/vendor/gdext/godot", features = ["api-cu
 来自 vendored 的 gdext 上游代码（`godot` / `godot-cell`），只是警告，不影响构建与运行，
 可以忽略。它默认被 `[workspace.lints]` 的 `check-cfg` 关掉，作为路径依赖被引用时会漏出来。
 
+### `Method 'RustScriptRegistry.register_script_type' has changed and no compatibility fallback has been provided`
+
+项目里的 Rust 库是用**另一份引擎**构建的：GDExtension 用“方法签名哈希”查找引擎方法，
+签名对不上就会报这个错（后面通常跟一个 gdext panic）。
+
+新版本已经做了两件事：
+
+1. 模块不再改动已发布方法的签名（描述符改用 `set_script_descriptor` 单独传递），
+   旧库仍然能加载；
+2. 库比 `.godot/rust/bindings/extension_api.json` 旧时会被判定为过期，打开编辑器会
+   自动重新构建。
+
+如果还是遇到：重新 `./build-macos.sh` 编译引擎，然后打开项目等它自动构建（或点 Build）。
+实在不行就删掉项目里的 `.godot/rust/bindings` 与 `.godot/rust/target` 再构建一次。
+
 ## 编辑器相关
 
 ### 创建 Rust 脚本时出现下面三条之一
