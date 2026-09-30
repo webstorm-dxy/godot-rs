@@ -59,7 +59,7 @@ print(RustLanguage.to_rust_class_name("GPUParticles2D"))   # GpuParticles2D
 
 三种方式，效果一样：
 
-1. **运行栏左侧的锤子/勾选图标**（Build Rust project）——只构建；
+1. **运行栏左侧的 Rust 图标**（Build Rust project）——只构建；
 2. **F5**（运行主场景）——先构建，失败就中止运行；
 3. 命令行：
 
