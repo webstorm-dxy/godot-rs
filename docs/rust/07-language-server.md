@@ -62,6 +62,28 @@ rust-analyzer --version      # 自检：应打印版本号，而不是 error:
 
 诊断与 cargo 构建诊断共用同一套显示机制，所以在构建前的编辑阶段就能看到类型错误。
 
+### 3.1 没有 rust-analyzer 时也有补全
+
+补全不是“全有或全无”：模块自己也会给候选，rust-analyzer 缺席时依然可用：
+
+| 候选 | 内容 |
+| --- | --- |
+| 关键字 | `fn` `impl` `match` `pub` `let` …（按已输入的单词过滤） |
+| 类型 | Rust 基础类型/标准库预导入 + Godot 的 `Vector2`、`Node2D`、`Gd` 等 |
+| 宏 | `println!`、`vec!`、`godot_print!`、`godot_error!` … |
+| 代码片段 | `fn …`、`impl …`、`match …`、`#[func]`、`#[signal]`、`#[export]` |
+| 本文件的函数 | 扫描当前缓冲区里的 `fn 名字`，补成 `名字()` |
+| `self.` 成员 | 走脚本描述符：本脚本的 `#[export]` 属性、`#[func]` 方法与信号 |
+
+rust-analyzer 正常时会以它的结果为主，只额外附加代码片段；`self.`/`::` 之后只给成员，
+避免弹出无关的关键字。
+
+### 3.2 光标位置
+
+脚本编辑器交给语言层的文本是**整个缓冲区**，并在光标处插入一个标记字符
+（`CodeEdit.get_text_for_code_completion()`）。模块会读这个标记来定位光标，
+补全请求因此落在真正输入的位置；同步给 rust-analyzer 的文本会去掉标记本身。
+
 ## 4. 工作原理
 
 ```

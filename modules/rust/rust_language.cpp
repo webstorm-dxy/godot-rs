@@ -3,6 +3,7 @@
 #include "rust_diagnostics.h"
 
 #include "core/object/class_db.h"
+#include "core/templates/hash_set.h"
 #include "rust_script.h"
 #include "rust_script_registry.h"
 
@@ -217,12 +218,25 @@ String RustLanguage::validate_path(const String &p_path) const {
 	return String();
 }
 
-// 0-based position of the caret: the editor hands `complete_code` the text up to
-// the cursor, so the end of that buffer is where the request belongs.
-static void _caret_at_end(const String &p_code, int &r_line, int &r_column) {
+// CodeEdit hands the whole buffer to complete_code() with a marker where the caret
+// is (CodeEdit::get_text_for_code_completion), so the request position has to be
+// recovered from it. Without the marker the caret sits at the end of the text.
+static const char32_t RUST_CARET_MARKER = 0xFFFF;
+
+static int _caret_offset(const String &p_code) {
+	const int marker = p_code.find(String::chr(RUST_CARET_MARKER));
+	return marker >= 0 ? marker : p_code.length();
+}
+
+static String _code_without_caret(const String &p_code) {
+	return p_code.replace(String::chr(RUST_CARET_MARKER), String());
+}
+
+// 0-based caret position, which is what the language server expects.
+static void _caret_position(const String &p_code, int p_offset, int &r_line, int &r_column) {
 	r_line = 0;
 	r_column = 0;
-	for (int i = 0; i < p_code.length(); i++) {
+	for (int i = 0; i < p_offset && i < p_code.length(); i++) {
 		if (p_code[i] == '\n') {
 			r_line++;
 			r_column = 0;
@@ -433,43 +447,271 @@ Ref<Script> RustLanguage::make_template(const String &p_template, const String &
 	return script;
 }
 
-Error RustLanguage::complete_code(const String &p_code, const String &p_path, Object *p_owner, List<CodeCompletionOption> *r_options, bool &r_force, String &r_call_hint) {
-#ifdef TOOLS_ENABLED
-	RustLsp *lsp = RustLsp::get_singleton();
-	if (lsp == nullptr || !lsp->is_running() || p_path.is_empty() || r_options == nullptr) {
-		return ERR_UNAVAILABLE;
-	}
-
-	int line = 0;
-	int column = 0;
-	_caret_at_end(p_code, line, column);
-	lsp->sync_document(p_path, p_code);
-
-	Array items;
-	String error;
-	if (!lsp->complete(p_path, line, column, items, error)) {
-		return ERR_UNAVAILABLE;
-	}
-
-	for (int i = 0; i < items.size(); i++) {
-		Dictionary item = items[i];
-		const String label = item.get("label", String());
-		if (label.is_empty()) {
+// The editor hands complete_code() the text up to the caret, so the word being
+// typed (and whether it follows a dot) can be read off the end of the buffer.
+static String _completion_word(const String &p_code) {
+	const int caret = _caret_offset(p_code);
+	int start = caret;
+	while (start > 0) {
+		const char32_t c = p_code[start - 1];
+		if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+			start--;
 			continue;
 		}
-		String insert = item.get("insertText", String());
-		if (insert.is_empty()) {
-			Dictionary text_edit = item.get("textEdit", Dictionary());
-			insert = text_edit.get("newText", String());
+		break;
+	}
+	return p_code.substr(start, caret - start);
+}
+
+static bool _completion_after_member_access(const String &p_code) {
+	const int end = _caret_offset(p_code) - _completion_word(p_code).length();
+	if (end <= 0) {
+		return false;
+	}
+	if (p_code[end - 1] == '.') {
+		return true;
+	}
+	return end >= 2 && p_code[end - 1] == ':' && p_code[end - 2] == ':';
+}
+
+// rust-analyzer answers with snippets that contain placeholders; the editor
+// inserts the text verbatim, so those placeholders have to become plain text.
+static String _plain_text_from_snippet(const String &p_snippet) {
+	String out;
+	int i = 0;
+	while (i < p_snippet.length()) {
+		const char32_t c = p_snippet[i];
+		if (c == '\\' && i + 1 < p_snippet.length()) {
+			out += p_snippet[i + 1];
+			i += 2;
+			continue;
 		}
-		if (insert.is_empty()) {
-			insert = label;
+		if (c == '$') {
+			if (i + 1 < p_snippet.length() && p_snippet[i + 1] == '{') {
+				const int end = p_snippet.find("}", i + 2);
+				if (end > 0) {
+					const String inner = p_snippet.substr(i + 2, end - i - 2);
+					const int colon = inner.find(":");
+					if (colon >= 0) {
+						out += inner.substr(colon + 1);
+					}
+					i = end + 1;
+					continue;
+				}
+			} else if (i + 1 < p_snippet.length() && p_snippet[i + 1] >= '0' && p_snippet[i + 1] <= '9') {
+				int j = i + 1;
+				while (j < p_snippet.length() && p_snippet[j] >= '0' && p_snippet[j] <= '9') {
+					j++;
+				}
+				i = j;
+				continue;
+			}
+		}
+		out += String::chr(c);
+		i++;
+	}
+	return out;
+}
+
+
+// Types and macros used by the built-in completion fallback.
+static const char *rust_completion_types[] = {
+	"bool", "char", "str", "String", "i8", "i16", "i32", "i64", "i128", "isize",
+	"u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64",
+	"Option", "Some", "None", "Result", "Ok", "Err", "Vec", "Box", "Rc", "Arc",
+	"RefCell", "Cell", "Mutex", "RwLock", "HashMap", "HashSet", "BTreeMap", "BTreeSet",
+	"VecDeque", "PathBuf", "Duration", "Instant",
+	"Gd", "GdMut", "Variant", "StringName", "GString", "NodePath",
+	"Node", "Node2D", "Node3D", "Control", "CanvasItem", "RefCounted", "Resource",
+	"SceneTree", "Input", "Engine", "Time", "Timer", "Tween", "Area2D", "CharacterBody2D",
+	"Sprite2D", "Camera2D", "CollisionShape2D", "Label", "Button", "Texture2D", "PackedScene",
+	nullptr
+};
+
+static const char *rust_completion_macros[] = {
+	"println!", "print!", "format!", "vec!", "panic!", "assert!", "assert_eq!",
+	"todo!", "unimplemented!", "unreachable!", "matches!", "dbg!",
+	"godot_print!", "godot_print_rich!", "godot_error!", "godot_warn!", "godot_script_error!",
+	nullptr
+};
+
+// Snippets offered on top of whatever rust-analyzer returns: the pieces of a
+// script that are annoying to type and the attribute markers of the module.
+struct RustCompletionSnippet {
+	const char *display;
+	const char *insert;
+	ScriptLanguage::CodeCompletionKind kind;
+};
+
+static const RustCompletionSnippet rust_completion_snippets[] = {
+	{ "fn", "fn name() {\n\t\n}", ScriptLanguage::CODE_COMPLETION_KIND_FUNCTION },
+	{ "impl", "impl Type {\n\t\n}", ScriptLanguage::CODE_COMPLETION_KIND_PLAIN_TEXT },
+	{ "struct", "struct Name {\n\t\n}", ScriptLanguage::CODE_COMPLETION_KIND_CLASS },
+	{ "enum", "enum Name {\n\t\n}", ScriptLanguage::CODE_COMPLETION_KIND_ENUM },
+	{ "match", "match value {\n\t_ => {}\n}", ScriptLanguage::CODE_COMPLETION_KIND_KEYWORD },
+	{ "if let", "if let Some(value) = option {\n\t\n}", ScriptLanguage::CODE_COMPLETION_KIND_KEYWORD },
+	{ "godot_print!", "godot_print!(\"\");", ScriptLanguage::CODE_COMPLETION_KIND_PLAIN_TEXT },
+	{ "godot_error!", "godot_error!(\"\");", ScriptLanguage::CODE_COMPLETION_KIND_PLAIN_TEXT },
+	{ "#[func]", "#[func]\n", ScriptLanguage::CODE_COMPLETION_KIND_PLAIN_TEXT },
+	{ "#[signal]", "#[signal]\n", ScriptLanguage::CODE_COMPLETION_KIND_PLAIN_TEXT },
+	{ "#[export]", "#[export]\n", ScriptLanguage::CODE_COMPLETION_KIND_PLAIN_TEXT },
+	{ "RustScript", "#[derive(RustScript)]\n#[script(base = Node2D)]\n", ScriptLanguage::CODE_COMPLETION_KIND_PLAIN_TEXT },
+	{ nullptr, nullptr, ScriptLanguage::CODE_COMPLETION_KIND_PLAIN_TEXT },
+};
+
+Error RustLanguage::complete_code(const String &p_code, const String &p_path, Object *p_owner, List<CodeCompletionOption> *r_options, bool &r_force, String &r_call_hint) {
+#ifdef TOOLS_ENABLED
+	if (r_options == nullptr) {
+		return ERR_UNAVAILABLE;
+	}
+
+	// The editor passes the text up to the caret; the word being typed filters the
+	// built-in lists the same way GDScript's language does it.
+	const String prefix = _completion_word(p_code);
+	const String lowered_prefix = prefix.to_lower();
+	const bool member_access = _completion_after_member_access(p_code);
+	const int before = r_options->size();
+	HashSet<String> seen;
+
+	auto add_option = [&](const String &p_display, CodeCompletionKind p_kind, const String &p_insert) {
+		if (seen.has(p_display)) {
+			return;
+		}
+		seen.insert(p_display);
+		CodeCompletionOption option(p_insert.is_empty() ? p_display : p_insert, p_kind, LOCATION_OTHER, p_display);
+		option.display = p_display;
+		option.insert_text = p_insert.is_empty() ? p_display : p_insert;
+		r_options->push_back(option);
+	};
+
+	bool lsp_answered = false;
+	RustLsp *lsp = RustLsp::get_singleton();
+	if (lsp != nullptr && lsp->is_running() && !p_path.is_empty()) {
+		int line = 0;
+		int column = 0;
+		_caret_position(p_code, _caret_offset(p_code), line, column);
+		// The caret marker is ours, the language server must not see it.
+		lsp->sync_document(p_path, _code_without_caret(p_code));
+
+		Array items;
+		String error;
+		if (lsp->complete(p_path, line, column, items, error)) {
+			lsp_answered = true;
+			for (int i = 0; i < items.size(); i++) {
+				Dictionary item = items[i];
+				const String label = item.get("label", String());
+				if (label.is_empty() || seen.has(label)) {
+					continue;
+				}
+				String insert = item.get("insertText", String());
+				if (insert.is_empty()) {
+					Dictionary text_edit = item.get("textEdit", Dictionary());
+					insert = text_edit.get("newText", String());
+				}
+				if (insert.is_empty()) {
+					insert = label;
+				}
+				if ((int)item.get("insertTextFormat", 1) == 2) {
+					insert = _plain_text_from_snippet(insert);
+				}
+				seen.insert(label);
+				CodeCompletionOption option(insert, _lsp_completion_kind((int)item.get("kind", 0)), LOCATION_OTHER, "");
+				option.display = label;
+				option.insert_text = insert;
+				r_options->push_back(option);
+			}
+		}
+	}
+
+	// Snippets are always offered; the keyword/type lists are the completion for
+	// when rust-analyzer is not running (or not installed at all). After a dot the
+	// only sensible answers are members, so nothing global is added there.
+	for (int i = 0; !member_access && rust_completion_snippets[i].display != nullptr; i++) {
+		const RustCompletionSnippet &snippet = rust_completion_snippets[i];
+		const String display = snippet.display;
+		if (!prefix.is_empty() && !display.to_lower().begins_with(lowered_prefix)) {
+			continue;
+		}
+		add_option(display, snippet.kind, snippet.insert);
+	}
+
+	if (!lsp_answered && !member_access) {
+		for (const String &word : get_reserved_words()) {
+			if (!prefix.is_empty() && !word.begins_with(prefix)) {
+				continue;
+			}
+			add_option(word, is_control_flow_keyword(word) ? CODE_COMPLETION_KIND_KEYWORD : CODE_COMPLETION_KIND_KEYWORD, String());
+		}
+		List<String> core_types;
+		get_core_type_words(&core_types);
+		for (const String &type : core_types) {
+			if (!prefix.is_empty() && !type.to_lower().begins_with(lowered_prefix)) {
+				continue;
+			}
+			add_option(type, CODE_COMPLETION_KIND_CLASS, String());
+		}
+		for (int i = 0; rust_completion_types[i] != nullptr; i++) {
+			const String type = rust_completion_types[i];
+			if (!prefix.is_empty() && !type.to_lower().begins_with(lowered_prefix)) {
+				continue;
+			}
+			add_option(type, CODE_COMPLETION_KIND_CLASS, String());
+		}
+		for (int i = 0; rust_completion_macros[i] != nullptr; i++) {
+			const String macro = rust_completion_macros[i];
+			if (!prefix.is_empty() && !macro.begins_with(prefix)) {
+				continue;
+			}
+			add_option(macro, CODE_COMPLETION_KIND_FUNCTION, String());
 		}
 
-		CodeCompletionOption option(insert, _lsp_completion_kind((int)item.get("kind", 0)), LOCATION_OTHER, "");
-		option.display = label;
-		option.insert_text = insert;
-		r_options->push_back(option);
+		// Functions declared in this file, so a script still completes its own API
+		// without a language server.
+		int at = p_code.find("fn ");
+		while (at >= 0) {
+			const int start = at + 3;
+			int end = start;
+			while (end < p_code.length()) {
+				const char32_t c = p_code[end];
+				if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+					end++;
+					continue;
+				}
+				break;
+			}
+			const String function = p_code.substr(start, end - start);
+			if (!function.is_empty() && (prefix.is_empty() || function.begins_with(prefix))) {
+				add_option(function + "()", CODE_COMPLETION_KIND_FUNCTION, function + "()");
+			}
+			at = p_code.find("fn ", end);
+		}
+	}
+
+	// After `self.` the interesting names are the script's own API.
+	if (member_access) {
+		RustScriptRegistry *registry = RustScriptRegistry::get_singleton();
+		RustScriptRegistry::ScriptType type;
+		if (registry != nullptr && !p_path.is_empty() && registry->get_script_type(p_path, type)) {
+			for (const MethodInfo &method : type.methods) {
+				if (prefix.is_empty() || String(method.name).begins_with(prefix)) {
+					add_option(String(method.name) + "()", CODE_COMPLETION_KIND_FUNCTION, String(method.name) + "()");
+				}
+			}
+			for (const PropertyInfo &property : type.properties) {
+				if (prefix.is_empty() || String(property.name).begins_with(prefix)) {
+					add_option(property.name, CODE_COMPLETION_KIND_MEMBER, String());
+				}
+			}
+			for (const MethodInfo &signal : type.signals) {
+				if (prefix.is_empty() || String(signal.name).begins_with(prefix)) {
+					add_option(signal.name, CODE_COMPLETION_KIND_SIGNAL, String());
+				}
+			}
+		}
+	}
+
+	if (r_options->size() == before) {
+		return ERR_UNAVAILABLE;
 	}
 	r_force = true;
 	return OK;

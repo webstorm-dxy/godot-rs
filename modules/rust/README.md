@@ -67,6 +67,13 @@ like a `.gd` file.
   GDScript's.
 - Samples: [`support/godot-script/src/lib.rs`](support/godot-script/src/lib.rs)
   and [`docs/rust/03-writing-scripts.md`](../../docs/rust/03-writing-scripts.md).
+- `.rs` files are syntax coloured in the built-in script editor by a theme-aware
+  highlighter (keywords, types, macros, numbers, strings, comments, doc comments,
+  attributes, engine classes and the script classes of the project); it appears
+  as "Rust" in the highlighter menu of the script editor.
+- Completion works with or without rust-analyzer: the language itself offers
+  keywords, types, macros, snippets, the functions of the edited file, and the
+  members of the script after `self.`.
 - Tool scripts (`#[script(..., tool)]`) run in the editor; plain scripts only run
   in the game, exactly like GDScript.
 - Descriptors are cached in `.godot/rust/script_cache.json` after every build, so

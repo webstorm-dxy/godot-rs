@@ -22,6 +22,20 @@
 #include "editor/project_manager/project_dialog.h"
 #include "editor/rust_build.h"
 #include "editor/rust_editor_plugin.h"
+#include "editor/rust_highlighter.h"
+
+#include "editor/editor_node.h"
+#include "editor/script/script_editor_plugin.h"
+
+// Runs once the editor (and with it the script editor) has been created.
+static void _register_syntax_highlighter() {
+	if (ScriptEditor::get_singleton() == nullptr) {
+		return;
+	}
+	Ref<RustSyntaxHighlighter> rust_syntax_highlighter;
+	rust_syntax_highlighter.instantiate();
+	ScriptEditor::get_singleton()->register_syntax_highlighter(rust_syntax_highlighter);
+}
 #include "editor/rust_lsp.h"
 #include "editor/rust_project.h"
 #endif
@@ -108,6 +122,12 @@ void initialize_rust_module(ModuleInitializationLevel p_level) {
 		rust_build = memnew(RustBuild);
 		EditorPlugins::add_by_type<RustEditorPlugin>();
 		ProjectDialog::add_project_creation_callback(&_rust_project_created);
+
+		// Syntax coloring for .rs files: the editor picks a highlighter by script
+		// language name, so this one answers to "Rust". Registration has to wait
+		// until the script editor exists (same dance GDScript does).
+		GDREGISTER_CLASS(RustSyntaxHighlighter);
+		EditorNode::add_init_callback(_register_syntax_highlighter);
 
 		// rust-analyzer bridge, reachable from the editor as "RustLsp".
 		GDREGISTER_CLASS(RustLsp);

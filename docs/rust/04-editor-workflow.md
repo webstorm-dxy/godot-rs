@@ -80,6 +80,16 @@ cargo build --manifest-path <项目>/Cargo.toml \
 
 产物是 `.godot/rust/target/debug/lib<项目名>.dylib`，由模块自动加载。
 
+## 3.1 代码高亮与补全
+
+- `.rs` 文件在脚本编辑器里按编辑器主题上色：关键字/控制流、类型（Rust 预导入 + Godot 类型）、
+  函数与宏、数字、字符串与字符字面量、注释与 `///` 文档注释、`#[…]` 属性，
+  以及引擎类和**本项目的 Rust 脚本类名**；换主题或改配色会立即跟着变。
+- 高亮器在脚本编辑器右上角的 *Highlighter* 菜单里显示为 **Rust**，也可以手动切回 Standard/Plain Text。
+- 补全（Ctrl+Space）：有 rust-analyzer 时用它给的候选；没有时用模块内置的关键字、类型、宏、
+  代码片段、本文件里的函数，以及 `self.` 之后的脚本成员。
+  详见 [07-language-server.md](07-language-server.md)。
+
 ## 4. 看错误
 
 - **Rust 面板**（底部 Dock，标题 *Rust*）：
