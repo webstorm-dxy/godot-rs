@@ -23,6 +23,9 @@ public:
 	virtual String _get_name() const override { return "Rust"; }
 	virtual PackedStringArray _get_supported_languages() const override;
 	virtual Ref<EditorSyntaxHighlighter> _create() const override;
+	// Rust highlighting can be newer than the script editor cache of a project, so
+	// a cached "Plain Text" state must not switch it back off.
+	virtual bool _wins_over_cached_plain_text() const override { return true; }
 
 	RustSyntaxHighlighter();
 };

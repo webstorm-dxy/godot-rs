@@ -7,7 +7,15 @@
 #include "rust_project.h"
 
 #include "../register_types.h"
+#include "../rust_language.h"
+
+#include "rust_highlighter.h"
 #include "../rust_script.h"
+
+#include "editor/script/script_editor_base.h"
+#include "editor/script/script_editor_plugin.h"
+#include "scene/gui/text_edit.h"
+#include "scene/resources/syntax_highlighter.h"
 
 #include "core/config/project_settings.h"
 #include "core/object/callable_mp.h"
@@ -73,6 +81,8 @@ void RustEditorPlugin::_notification(int p_what) {
 			}
 		} break;
 		case NOTIFICATION_PROCESS: {
+			_ensure_rust_highlighter();
+
 			RustBuild *build = RustBuild::get_singleton();
 			if (build == nullptr) {
 				return;
@@ -99,6 +109,79 @@ void RustEditorPlugin::_notification(int p_what) {
 		default: {
 		} break;
 	}
+}
+
+// Tabs that were created before this build existed keep the highlighter the script
+// editor cache gave them ("Plain Text"), because the cached state is applied when
+// a script is opened. Replace it with the Rust highlighter once per script.
+void RustEditorPlugin::_ensure_rust_highlighter() {
+	ScriptEditor *script_editor = ScriptEditor::get_singleton();
+	if (script_editor == nullptr) {
+		return;
+	}
+
+	// Re-check the visible tab on every change (and once a second otherwise): the
+	// highlighter is applied while the tab is being built, so it can already be the
+	// wrong one by the time the tab shows up.
+	ScriptEditorBase *current = script_editor->get_current_editor();
+	if (current != last_highlighter_editor || ++highlighter_recheck_frames >= 60) {
+		highlighter_recheck_frames = 0;
+		last_highlighter_editor = current;
+		_apply_rust_highlighter(current);
+	}
+
+	// Last session's tabs are reopened after the plugin was created, so give every
+	// open tab one pass a few frames into the session.
+	if (!highlighter_scan_done && ++highlighter_scan_frames > 20) {
+		highlighter_scan_done = true;
+		TypedArray<ScriptEditorBase> open_editors = script_editor->call("get_open_script_editors");
+		for (int i = 0; i < open_editors.size(); i++) {
+			_apply_rust_highlighter(Object::cast_to<ScriptEditorBase>(open_editors[i]));
+		}
+	}
+}
+
+void RustEditorPlugin::_apply_rust_highlighter(ScriptEditorBase *p_editor) {
+	if (p_editor == nullptr || highlighter_nudged_scripts.size() > 512) {
+		return;
+	}
+	TextEditorBase *editor = Object::cast_to<TextEditorBase>(p_editor);
+	if (editor == nullptr) {
+		return;
+	}
+	Ref<Script> script = p_editor->get_edited_resource();
+	if (script.is_null() || script->get_language() != RustLanguage::get_singleton()) {
+		return;
+	}
+	const String path = script->get_path();
+	if (path.is_empty() || highlighter_nudged_scripts.has(path)) {
+		return;
+	}
+	TextEdit *text_edit = Object::cast_to<TextEdit>(editor->get_base_editor());
+	if (text_edit == nullptr) {
+		return;
+	}
+
+	// Anything that already understands Rust wins; the plain text and standard
+	// highlighters (which list no languages) do not.
+	const Ref<SyntaxHighlighter> active = text_edit->get_syntax_highlighter();
+	EditorSyntaxHighlighter *active_highlighter = Object::cast_to<EditorSyntaxHighlighter>(active.ptr());
+	if (active_highlighter != nullptr) {
+		const PackedStringArray languages = active_highlighter->_get_supported_languages();
+		if (languages.has(script->get_language()->get_name()) || languages.has(path.get_extension())) {
+			return;
+		}
+	}
+
+	highlighter_nudged_scripts.insert(path);
+	Ref<RustSyntaxHighlighter> factory;
+	factory.instantiate();
+	Ref<EditorSyntaxHighlighter> instance = factory->_create();
+	if (instance.is_null()) {
+		return;
+	}
+	editor->set_syntax_highlighter(instance);
+	print_line(vformat("Rust: enabled syntax highlighting for %s", path));
 }
 
 void RustEditorPlugin::_check_project() {

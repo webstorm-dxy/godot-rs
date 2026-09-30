@@ -634,7 +634,17 @@ void TextEditorBase::set_edit_state(const Variant &p_state) {
 	if (state.has("syntax_highlighter")) {
 		for (const Ref<EditorSyntaxHighlighter> &highlighter : highlighters) {
 			if (highlighter->_get_name() == String(state["syntax_highlighter"])) {
-				set_syntax_highlighter(highlighter);
+				// The state is written per script and outlives the editor build that wrote
+				// it: a language whose highlighter was added later would otherwise restore
+				// the plain "no highlighter" state forever. Such a language can opt out of
+				// that (see EditorSyntaxHighlighter::_wins_over_cached_plain_text); any
+				// other cached choice still wins.
+				const Ref<SyntaxHighlighter> current = code_editor->get_text_editor()->get_syntax_highlighter();
+				const EditorSyntaxHighlighter *current_language = Object::cast_to<EditorSyntaxHighlighter>(current.ptr());
+				const bool cached_plain = Object::cast_to<EditorPlainTextSyntaxHighlighter>(highlighter.ptr()) != nullptr;
+				if (!(cached_plain && current_language != nullptr && current_language->_wins_over_cached_plain_text())) {
+					set_syntax_highlighter(highlighter);
+				}
 				break;
 			}
 		}

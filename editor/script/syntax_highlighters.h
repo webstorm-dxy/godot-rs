@@ -49,6 +49,11 @@ public:
 	virtual String _get_name() const;
 	virtual PackedStringArray _get_supported_languages() const;
 
+	// Highlighter of a language that may be newer than the script editor cache.
+	// Returning true keeps it selected when the cache would restore "Plain Text"
+	// for a script of that language (see TextEditorBase::set_edit_state).
+	virtual bool _wins_over_cached_plain_text() const { return false; }
+
 	void _set_edited_resource(const Ref<Resource> &p_res) { edited_resource = p_res; }
 	Ref<RefCounted> _get_edited_resource() { return edited_resource; }
 
