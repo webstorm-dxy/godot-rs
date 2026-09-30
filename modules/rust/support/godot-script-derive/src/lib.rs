@@ -95,11 +95,9 @@ fn expand_derive(input: &DeriveInput) -> syn::Result<TokenStream2> {
             "add #[script(base = YourBaseNode)] to say which engine class this script extends",
         ));
     };
-    let base_name = base
-        .segments
-        .last()
-        .map(|segment| segment.ident.to_string())
-        .unwrap_or_default();
+    // BASE_NAME stays at its default: the support crate asks gdext for the engine
+    // name of `type Base`, which is not always the Rust spelling (GPUParticles2D is
+    // `GpuParticles2D`).
     let class_name = class_name.unwrap_or_else(|| struct_name.to_string());
 
     let fields = match &input.data {
@@ -291,7 +289,6 @@ fn expand_derive(input: &DeriveInput) -> syn::Result<TokenStream2> {
         impl ::godot_script::RustScript for #struct_name {
             type Base = #base;
             const CLASS_NAME: &'static str = #class_name;
-            const BASE_NAME: &'static str = #base_name;
             const IS_TOOL: bool = #is_tool;
 
             fn new(owner: ::godot::obj::Gd<Self::Base>) -> Self {

@@ -123,6 +123,17 @@ ERROR: delimiter with start key '//!' already exists.
 - 改了 `src/lib.rs` 里的扩展入口（`on_stage_init` 注册逻辑）；
 - 需要把**已经存在的**实例换成新代码（旧实例保持创建时的代码）。
 
+### 用 `Navigation*`、`Graph*` 这类“实验性”类做基类时编译失败
+
+gdext 默认不生成 Godot 标记为 *experimental* 的类（`NavigationRegion2D`、`GraphNode`、
+`Parallax2D`、`SkeletonModification*`、`XRBodyTracker` 等），而编辑器仍然允许把它们选作基类。
+给 `godot` 依赖打开对应特性即可（模块同步依赖时会保留你写的 features）：
+
+```toml
+[dependencies]
+godot = { version = "0.5", features = ["experimental-godot-api"] }
+```
+
 ### `Rust: editor icon 'BuildRust' could not be resolved.`
 
 运行栏图标的主题项没找到，通常是没有完整重编译（图标在引擎编译时打包进主题）。
@@ -160,7 +171,7 @@ Syntax Error: expected SEMICOLON
 
 1. 文件里是否有 `godot_script::register_script!(Player);`；
 2. `src/lib.rs` 里是否有 `mod player;` 和 `player::register();`；
-3. `CLASS_NAME` 与 `BASE_NAME` 是否和 `type Base` 对应；
+3. `CLASS_NAME` 是否和结构体名一致（`BASE_NAME` 可留空，默认按 `type Base` 推导）；
 4. 构建输出里有没有 `godot-script: registered 'Player' (base Node2D) for res://src/player.rs`。
 
 ### `Rust: script ... extends ... so it cannot be attached to an object of type ...`

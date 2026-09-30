@@ -202,6 +202,8 @@ String RustLanguage::to_rust_type_name(const String &p_name) {
 void RustLanguage::_bind_methods() {
 	ClassDB::bind_static_method("RustLanguage", D_METHOD("to_rust_type_name", "name"), &RustLanguage::to_rust_type_name);
 	ClassDB::bind_static_method("RustLanguage", D_METHOD("is_valid_module_name", "name"), &RustLanguage::is_valid_module_name);
+	ClassDB::bind_static_method("RustLanguage", D_METHOD("to_rust_class_name", "class_name"), &RustLanguage::to_rust_class_name);
+	ClassDB::bind_static_method("RustLanguage", D_METHOD("make_script_source", "class_name", "base_class_name"), &RustLanguage::make_script_source);
 }
 
 String RustLanguage::validate_path(const String &p_path) const {
@@ -306,39 +308,128 @@ String RustLanguage::get_global_class_name(const String &p_path, String *r_base_
 	return type.class_name;
 }
 
+// Classes that `godot::prelude` already exports (godot/src/prelude.rs): a script
+// based on one of them needs no extra `use`.
+static bool _is_in_godot_prelude(const String &p_class_name) {
+	static const char *const prelude_classes[] = {
+		"INode", "INode2D", "INode3D", "IObject", "IPackedScene", "IRefCounted", "IResource",
+		"ISceneTree", "Node", "Node2D", "Node3D", "Object", "PackedScene", "RefCounted",
+		"Resource", "SceneTree",
+	};
+	for (const char *prelude_class : prelude_classes) {
+		if (p_class_name == prelude_class) {
+			return true;
+		}
+	}
+	return false;
+}
+
+String RustLanguage::to_rust_class_name(const String &p_class_name) {
+	// Mirrors gdext's class naming (godot-codegen/src/conv/name_conversions.rs):
+	// Rust types are PascalCase, so acronym runs are lowered and a few names are
+	// spelled out by hand.
+	if (p_class_name == "JSONRPC") {
+		return "JsonRpc";
+	}
+	if (p_class_name == "OpenXRAPIExtension") {
+		return "OpenXrApiExtension";
+	}
+	if (p_class_name == "OpenXRIPBinding") {
+		return "OpenXrIpBinding";
+	}
+
+	Vector<String> words;
+	String word;
+	for (int i = 0; i < p_class_name.length(); i++) {
+		const char32_t c = p_class_name[i];
+		const bool alnum = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+		if (!alnum) {
+			if (!word.is_empty()) {
+				words.push_back(word);
+				word = String();
+			}
+			continue;
+		}
+		if (!word.is_empty()) {
+			const char32_t previous = p_class_name[i - 1];
+			const char32_t next = i + 1 < p_class_name.length() ? p_class_name[i + 1] : 0;
+			const bool upper = c >= 'A' && c <= 'Z';
+			const bool previous_lower = previous >= 'a' && previous <= 'z';
+			// A capital right after digits starts a word when the digits end a real
+			// word ("Node2|D", "X509|Certificate") but not inside an acronym run
+			// ("CCDIK3D" stays one word, which heck renders as "Ccdik3d").
+			bool after_word_digits = false;
+			if (previous >= '0' && previous <= '9') {
+				int before_digits = i - 1;
+				while (before_digits >= 0 && p_class_name[before_digits] >= '0' && p_class_name[before_digits] <= '9') {
+					before_digits--;
+				}
+				const bool digits_after_lower = before_digits >= 0 && p_class_name[before_digits] >= 'a' && p_class_name[before_digits] <= 'z';
+				after_word_digits = digits_after_lower || (next >= 'a' && next <= 'z');
+			}
+			// An acronym followed by a word ("HTTPRequest") splits before that word.
+			const bool boundary = upper && (previous_lower || after_word_digits || (previous >= 'A' && previous <= 'Z' && next >= 'a' && next <= 'z'));
+			if (boundary) {
+				words.push_back(word);
+				word = String();
+			}
+		}
+		word += String::chr(c);
+	}
+	if (!word.is_empty()) {
+		words.push_back(word);
+	}
+
+	String out;
+	for (const String &part : words) {
+		if (!part.is_empty()) {
+			out += part.substr(0, 1).to_upper() + part.substr(1).to_lower();
+		}
+	}
+	if (out.is_empty()) {
+		return p_class_name;
+	}
+	return out.replace("GdExtension", "GDExtension").replace("GdNative", "GDNative").replace("GdScript", "GDScript").replace("Vsync", "VSync").replace("Sdfgiy", "SdfgiY");
+}
+
+String RustLanguage::make_script_source(const String &p_class_name, const String &p_base_class_name) {
+	String base_engine = p_base_class_name.is_empty() ? String("Object") : p_base_class_name;
+	if (!_is_valid_rust_identifier(base_engine) || !ClassDB::class_exists(StringName(base_engine)) || !ClassDB::is_class_exposed(StringName(base_engine))) {
+		// Custom types arrive as a quoted script path; engine classes that no scripting
+		// extension can see (editor internals) cannot be a base either: use a Node.
+		base_engine = "Node";
+	}
+	const String base = to_rust_class_name(base_engine);
+	const String class_name = to_rust_type_name(p_class_name);
+
+	String source;
+	source += "use godot::prelude::*;\n";
+	if (!_is_in_godot_prelude(base)) {
+		// The base type is not exported by the prelude, so name it explicitly.
+		source += vformat("use godot::classes::%s;\n", base);
+	}
+	source += "use godot_script::prelude::*;\n\n";
+	source += vformat("#[derive(RustScript)]\n#[script(base = %s)]\n", base);
+	source += vformat("pub struct %s {\n", class_name);
+	source += vformat("    owner: Gd<%s>,\n", base);
+	source += "    #[export]\n    speed: f32,\n";
+	source += "}\n\n";
+	source += vformat("#[godot_script_api]\nimpl %s {\n", class_name);
+	source += "    fn ready(&mut self) {\n";
+	source += "        // `owner` is the node this script is attached to (a Gd<Base>).\n";
+	source += "        let _ = &self.owner;\n";
+	source += vformat("        godot_print!(\"%s ready\");\n", class_name);
+	source += "    }\n}\n\n";
+	source += vformat("godot_script::register_script!(%s);\n", class_name);
+	return source;
+}
+
 Ref<Script> RustLanguage::make_template(const String &p_template, const String &p_class_name, const String &p_base_class_name) const {
 	Ref<RustScript> script;
 	script.instantiate();
-
-	String base = p_base_class_name.is_empty() ? String("Object") : p_base_class_name;
-	if (!_is_valid_rust_identifier(base)) {
-		// The dialog passes custom types as a quoted script path; those cannot be
-		// expressed as a Rust base type, so fall back to a plain Node.
-		base = "Node";
-	}
-	const String class_name = to_rust_type_name(p_class_name);
-
-	// Attachable-script template: the class extends `base`, so the script can be
-	// attached to any node of that type. The saver adds the `mod` declaration and
-	// the `register` call to the crate root on first save.
-	String source;
-	source += "use godot::prelude::*;\n";
-	source += "use godot_script::prelude::*;\n\n";
-	source += vformat("pub struct %s {\n", class_name);
-	source += vformat("    owner: Gd<%s>,\n", base);
-	source += "}\n\n";
-	source += vformat("impl RustScript for %s {\n", class_name);
-	source += vformat("    type Base = %s;\n", base);
-	source += vformat("    const CLASS_NAME: &'static str = \"%s\";\n", class_name);
-	source += vformat("    const BASE_NAME: &'static str = \"%s\";\n\n", base);
-	source += vformat("    fn new(owner: Gd<Self::Base>) -> Self {\n        Self { owner }\n    }\n\n");
-	source += "    fn ready(&mut self) {\n";
-	source += vformat("        godot_print!(\"%s ready\");\n", class_name);
-	source += "    }\n";
-	source += "}\n\n";
-	source += vformat("godot_script::register_script!(%s);\n", class_name);
-
-	script->set_source_code(source);
+	// The dialog picks the base class, so the template can name it (and import it);
+	// the saver adds the `mod` declaration and the `register` call to the crate root.
+	script->set_source_code(make_script_source(p_class_name, p_base_class_name));
 	return script;
 }
 

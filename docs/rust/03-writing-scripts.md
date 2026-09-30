@@ -256,12 +256,18 @@ fn process(&mut self, delta: f64) {
 
 编辑器创建脚本时如果文件名不合法，会直接给出提示、不生成文件；手动写文件时请自己遵守。
 
+**基类的 `use` 会自动加**：编辑器建脚本时按你选的基类生成 `#[script(base = <基类>)]`，
+并在基类不在 `godot::prelude` 里时补一行 `use godot::classes::<基类>;`（例如
+`CharacterBody2D`、`Control`、`GPUParticles2D`），所以新建的脚本直接就能编译。
+
 命名转换规则也可以在编辑器脚本/工具里直接调用（便于批量重命名等）：
 
 ```gdscript
-RustLanguage.to_rust_type_name("sprite_2d")     # "Sprite2D"
-RustLanguage.to_rust_type_name("my-script")     # "MyScript"
-RustLanguage.is_valid_module_name("my-script")  # false
+RustLanguage.to_rust_type_name("sprite_2d")          # "Sprite2D"
+RustLanguage.to_rust_type_name("my-script")          # "MyScript"
+RustLanguage.is_valid_module_name("my-script")       # false
+RustLanguage.to_rust_class_name("GPUParticles2D")    # "GpuParticles2D"（引擎类名 -> gdext 类型名）
+RustLanguage.make_script_source("Player", "Node2D") # 完整脚本源码（含 `use`）
 ```
 
 规则细节：按非字母数字切词、每词首字母大写（`sprite_2d` → `Sprite2D`）；全大写词按普通词处理
@@ -287,6 +293,8 @@ pub struct Player {
 impl RustScript for Player {
     type Base = Node2D;
     const CLASS_NAME: &'static str = "Player";
+    // 可省略：留空时会用 gdext 给出的引擎类名（`GPUParticles2D` 在 Rust 里写作
+    // `GpuParticles2D`，自动推导就不会写错）。只有想用别的类做检查时才需要写死。
     const BASE_NAME: &'static str = "Node2D";
 
     fn new(owner: Gd<Self::Base>) -> Self {

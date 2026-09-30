@@ -17,9 +17,43 @@
 
 编辑器会：
 
-- 生成脚本文件（模板里已填好 `type Base = <节点基类>`）；
+- 生成脚本文件，并**按你选的基类写好类型与 `use`**：基类不在 `godot::prelude` 里时（例如
+  `CharacterBody2D`、`Control`、`GPUParticles2D`）自动加上 `use godot::classes::<基类>;`，
+  类名按 gdext 的 Rust 命名转换（`GPUParticles2D` → `GpuParticles2D`、`ClassDB` → `ClassDb`）；
 - 自动把 `mod player;` 与 `player::register();` 写进 `src/lib.rs`；
 - 把脚本挂到该节点上（此时是占位实例，因为还没编译）。
+
+生成出来的例子（基类选 `CharacterBody2D`）：
+
+```rust
+use godot::prelude::*;
+use godot::classes::CharacterBody2D;
+use godot_script::prelude::*;
+
+#[derive(RustScript)]
+#[script(base = CharacterBody2D)]
+pub struct Player {
+    owner: Gd<CharacterBody2D>,
+    #[export]
+    speed: f32,
+}
+
+#[godot_script_api]
+impl Player {
+    fn ready(&mut self) {
+        godot_print!("Player ready");
+    }
+}
+
+godot_script::register_script!(Player);
+```
+
+同样的源码可以在编辑器脚本/CI 里生成（便于批量建脚本）：
+
+```gdscript
+print(RustLanguage.make_script_source("Player", "CharacterBody2D"))
+print(RustLanguage.to_rust_class_name("GPUParticles2D"))   # GpuParticles2D
+```
 
 ## 3. 构建
 

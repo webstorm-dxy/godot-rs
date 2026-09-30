@@ -22,6 +22,11 @@ public:
 	// Module (file) names must be valid Rust identifiers in snake_case and must
 	// not collide with a Rust keyword.
 	static bool is_valid_module_name(const String &p_name);
+	// Engine class name -> gdext type name, e.g. "Node2D" -> "Node2D" but
+	// "GPUParticles2D" -> "GpuParticles2D" and "ClassDB" -> "ClassDb".
+	static String to_rust_class_name(const String &p_class_name);
+	// Source of a new attachable script, as the "Create Script" dialog produces it.
+	static String make_script_source(const String &p_class_name, const String &p_base_class_name);
 
 	virtual String get_name() const override { return "Rust"; }
 	virtual void init() override {}

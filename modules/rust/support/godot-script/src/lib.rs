@@ -276,7 +276,12 @@ pub trait RustScript: Sized + 'static {
     const CLASS_NAME: &'static str;
 
     /// Engine name of [`Self::Base`], e.g. "Node2D".
-    const BASE_NAME: &'static str;
+    ///
+    /// Leave it empty (the default) to take the name from gdext, which is what
+    /// `#[derive(RustScript)]` relies on: the Rust type and the engine class do not
+    /// always share a spelling (`GPUParticles2D` is `GpuParticles2D` in Rust).
+    /// Set it only to check the script against a different class than `Self::Base`.
+    const BASE_NAME: &'static str = "";
 
     /// Tool scripts also run inside the editor.
     const IS_TOOL: bool = false;
@@ -662,12 +667,20 @@ pub fn register<T: RustScript>(file_path: &str) {
     descriptor.set("methods", &methods_dictionary::<T>().to_variant());
     descriptor.set("signals", &signals_dictionary::<T>().to_variant());
 
+    // The engine compares this name with `Object::get_class_name()`, so it must be the
+    // Godot spelling; gdext knows it even when the Rust type is spelled differently.
+    let base_name = if T::BASE_NAME.is_empty() {
+        <T::Base as GodotClass>::class_id().to_string_name().to_string()
+    } else {
+        T::BASE_NAME.to_string()
+    };
+
     registry.call(
         "register_script_type",
         &[
             path.to_variant(),
             T::CLASS_NAME.to_variant(),
-            T::BASE_NAME.to_variant(),
+            base_name.to_variant(),
             T::IS_TOOL.to_variant(),
             create_fn.to_variant(),
         ],
@@ -683,7 +696,7 @@ pub fn register<T: RustScript>(file_path: &str) {
     godot::global::godot_print!(
         "godot-script: registered '{}' (base {}) for {}",
         T::CLASS_NAME,
-        T::BASE_NAME,
+        base_name,
         path
     );
 }
