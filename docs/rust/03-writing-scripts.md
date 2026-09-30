@@ -212,6 +212,8 @@ player.jumped.connect(_on_player_jumped)
 print(player.has_signal("jumped"))   # true
 ```
 
+两种写法都可以：`player.信号名` 拿到的就是普通的 `Signal`，和 GDScript 定义的信号一样。
+
 编辑器里右侧的 **Node → Signals** 面板同样会列出它并可以连接。和 GDScript 一致：
 **没有人连接的信号，发射时不会报错，也不会有任何效果**。
 

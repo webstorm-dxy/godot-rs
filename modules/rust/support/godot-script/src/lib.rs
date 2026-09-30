@@ -60,7 +60,7 @@
 
 use std::ffi::c_void;
 
-use godot::builtin::{GString, StringName, VarArray, VarDictionary, Variant, VariantType};
+use godot::builtin::{GString, StringName, VarArray, VarDictionary, Variant, VariantType, Signal};
 use godot::classes::{Engine, Script, ScriptLanguage};
 use godot::meta::error::CallErrorType;
 use godot::meta::{ClassId, FromGodot, ToGodot};
@@ -454,7 +454,19 @@ impl<T: RustScript> ScriptInstance for ScriptInstanceHandle<T> {
     }
 
     fn get_property(&self, name: StringName) -> Option<Variant> {
-        self.user.get_property(&name.to_string())
+        if let Some(value) = self.user.get_property(&name.to_string()) {
+            return Some(value);
+        }
+
+        // "node.some_signal" must hand back a Signal, the way it does for the
+        // signals of a GDScript class; without this only the string form
+        // connect("name", ...) works.
+        let signal_name = name.to_string();
+        if T::signals().iter().any(|signal| signal.name == signal_name) {
+            return Some(Signal::from_object_signal(&self.owner, &signal_name).to_variant());
+        }
+
+        None
     }
 
     fn on_property_get_revert(&self, name: StringName) -> Option<Variant> {
