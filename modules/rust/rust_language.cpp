@@ -559,6 +559,21 @@ static const RustCompletionSnippet rust_completion_snippets[] = {
 	{ nullptr, nullptr, ScriptLanguage::CODE_COMPLETION_KIND_PLAIN_TEXT },
 };
 
+// The editor paints every completion whose text starts with '#' as a comment (a
+// GDScript convention: its snippets insert '##' doc comments). A Rust attribute is
+// not a comment, and the comment colour is unreadable on dark themes, so those
+// entries ask for the regular editor font colour instead.
+static void _push_completion_option(List<ScriptLanguage::CodeCompletionOption> *r_options, const String &p_display, const String &p_insert, ScriptLanguage::CodeCompletionKind p_kind) {
+	const String insert = p_insert.is_empty() ? p_display : p_insert;
+	ScriptLanguage::CodeCompletionOption option(insert, p_kind, ScriptLanguage::LOCATION_OTHER, p_display);
+	option.display = p_display;
+	option.insert_text = insert;
+	if (insert.begins_with("#")) {
+		option.theme_color_name = "font_color";
+	}
+	r_options->push_back(option);
+}
+
 Error RustLanguage::complete_code(const String &p_code, const String &p_path, Object *p_owner, List<CodeCompletionOption> *r_options, bool &r_force, String &r_call_hint) {
 #ifdef TOOLS_ENABLED
 	if (r_options == nullptr) {
@@ -578,10 +593,7 @@ Error RustLanguage::complete_code(const String &p_code, const String &p_path, Ob
 			return;
 		}
 		seen.insert(p_display);
-		CodeCompletionOption option(p_insert.is_empty() ? p_display : p_insert, p_kind, LOCATION_OTHER, p_display);
-		option.display = p_display;
-		option.insert_text = p_insert.is_empty() ? p_display : p_insert;
-		r_options->push_back(option);
+		_push_completion_option(r_options, p_display, p_insert, p_kind);
 	};
 
 	bool lsp_answered = false;
@@ -615,10 +627,7 @@ Error RustLanguage::complete_code(const String &p_code, const String &p_path, Ob
 					insert = _plain_text_from_snippet(insert);
 				}
 				seen.insert(label);
-				CodeCompletionOption option(insert, _lsp_completion_kind((int)item.get("kind", 0)), LOCATION_OTHER, "");
-				option.display = label;
-				option.insert_text = insert;
-				r_options->push_back(option);
+				_push_completion_option(r_options, label, insert, _lsp_completion_kind((int)item.get("kind", 0)));
 			}
 		}
 	}
