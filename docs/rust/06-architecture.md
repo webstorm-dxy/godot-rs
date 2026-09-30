@@ -117,6 +117,22 @@ RustScript::migrate_instances()
 需要重启编辑器（这类项目会照旧重新加载场景，让新类的节点被创建出来）。
 上一轮会话的 `reload/` 目录会在下次启动时清掉。
 
+## 2.3 导出
+
+编辑器导出时 `RustExportPlugin`（`_export_begin`）会：
+
+```
+预设的 Debug/Release → cargo build（--release 视预设而定）
+  ▼
+add_shared_object(库, tags=[平台], target)   → 库落在 res:// 指向的目录
+add_file(res://.godot/rust/rust.gdextension) → pck 里放一份只含该平台的配置
+```
+
+运行时不需要额外机制：模块启动时照样加载 `res://.godot/rust/rust.gdextension`，
+只是这次它在 pck 里、库在可执行文件旁（macOS 是 `Contents/Resources`）。
+跨平台导出（在 macOS 上导 Windows 等）不自动交叉编译，只打警告——见
+[08-exporting.md](08-exporting.md)。
+
 ## 3. 为什么要自己装载扩展
 
 引擎的扩展列表 `.godot/extension_list.cfg` 由编辑器根据 `res://` 下扫描到的
@@ -128,6 +144,8 @@ RustScript::migrate_instances()
 已支持：
 
 - 新建项目自动生成 Cargo 工程、绑定、扩展配置；
+- 导出：按预设构建，把动态库和一份针对该平台的 `.gdextension` 放进导出产物
+  （[08-exporting.md](08-exporting.md)）；
 - F5 / `--build-solutions` 前自动 `cargo build`；错误在 Problems 面板与日志中可点击跳转；
 - `.rs` 文件在编辑器里打开、高亮、行内错误；
 - 创建脚本时自动维护 `src/lib.rs` 的 `mod` / `register`；
@@ -152,7 +170,6 @@ RustScript::migrate_instances()
 | --- | --- |
 | RPC | `@rpc` 风格的多人同步 |
 | 原生断点调试 | lldb-dap / CodeLLDB（M5） |
-| 导出 | 把 cdylib 打进导出产物（M6） |
 
 ## 5. 修改模块时的注意事项
 

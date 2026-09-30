@@ -18,10 +18,12 @@
 
 #ifdef TOOLS_ENABLED
 #include "editor/editor_node.h"
+#include "editor/export/editor_export.h"
 #include "editor/plugins/editor_plugin.h"
 #include "editor/project_manager/project_dialog.h"
 #include "editor/rust_build.h"
 #include "editor/rust_editor_plugin.h"
+#include "editor/rust_export_plugin.h"
 #include "editor/rust_highlighter.h"
 #include "editor/script/script_editor_base.h"
 #include "editor/script/script_editor_plugin.h"
@@ -91,19 +93,29 @@ static void _rust_project_created(const String &p_project_path, const String &p_
 // .gdextension files found under res://; the generated configuration lives in
 // .godot/ instead, so the module loads it directly. This also makes the game
 // subprocess load the freshly built library without any manual wiring.
-static bool _any_library_exists(const String &p_config_global) {
+// Res:// paths work both for a project on disk and for an exported game, where
+// the configuration lives inside the pack and the library sits next to the
+// executable.
+static bool _any_library_exists(const String &p_config_res) {
 	Ref<ConfigFile> config;
 	config.instantiate();
-	if (config->load(p_config_global) != OK) {
+	if (config->load(p_config_res) != OK) {
 		return false;
 	}
 	for (const String &key : config->get_section_keys("libraries")) {
 		const String path = config->get_value("libraries", key);
-		if (!path.is_empty() && FileAccess::exists(ProjectSettings::get_singleton()->globalize_path(path))) {
+		if (!path.is_empty() && FileAccess::exists(path)) {
 			return true;
 		}
 	}
 	return false;
+}
+
+// Registers the export plugin; runs once the editor exists (see add_init_callback).
+static void rust_register_export_plugin() {
+	Ref<RustExportPlugin> export_plugin;
+	export_plugin.instantiate();
+	EditorExport::get_singleton()->add_export_plugin(export_plugin);
 }
 
 static void _load_project_extension() {
@@ -111,7 +123,7 @@ static void _load_project_extension() {
 		return;
 	}
 	const String config = RustPaths::get_extension_config_res();
-	if (!_any_library_exists(RustPaths::get_extension_config_global())) {
+	if (!_any_library_exists(config)) {
 		// Not built yet; the editor plugin builds and loads it after cargo ran.
 		return;
 	}
@@ -162,6 +174,10 @@ void initialize_rust_module(ModuleInitializationLevel p_level) {
 		// until the script editor exists (same dance GDScript does).
 		GDREGISTER_CLASS(RustSyntaxHighlighter);
 		EditorNode::add_init_callback(rust_register_syntax_highlighter);
+
+		// Packs the library into exports; needs the editor's export singleton, which
+		// only exists once the editor is up.
+		EditorNode::add_init_callback(rust_register_export_plugin);
 
 		// rust-analyzer bridge, reachable from the editor as "RustLsp".
 		GDREGISTER_CLASS(RustLsp);

@@ -632,6 +632,45 @@ void RustProject::load_script_cache() {
 	}
 }
 
+String RustProject::host_platform() {
+	const String name = OS::get_singleton()->get_name().to_lower();
+	if (name.contains("macos") || name.contains("osx")) {
+		return "macos";
+	}
+	if (name.contains("windows")) {
+		return "windows";
+	}
+	if (name.contains("linux") || name.contains("bsd")) {
+		return "linuxbsd";
+	}
+	return String();
+}
+
+String RustProject::export_platform(const HashSet<String> &p_features) {
+	for (const String &candidate : { String("macos"), String("windows"), String("linuxbsd") }) {
+		if (p_features.has(candidate)) {
+			return candidate;
+		}
+	}
+	return String();
+}
+
+String RustProject::make_export_config_text(const String &p_platform, const String &p_library_res) {
+	return vformat(R"GDEXT([configuration]
+
+entry_symbol = "gdext_rust_init"
+compatibility_minimum = "%d.%d"
+reloadable = false
+
+[libraries]
+
+%s.debug = "%s"
+%s.release = "%s"
+)GDEXT",
+			GODOT_VERSION_MAJOR, GODOT_VERSION_MINOR,
+			p_platform, p_library_res, p_platform, p_library_res);
+}
+
 bool RustProject::project_uses_node_types() {
 	Vector<String> sources;
 	_collect_rust_sources(get_crate_root_global(), sources);

@@ -89,6 +89,16 @@ like a `.gd` file.
   `#[derive(GodotClass)]` node types still need a restart because a class cannot
   be registered twice in one process.
 
+**Export** (`editor/rust_export_plugin.*`, `docs/rust/08-exporting.md`)
+
+- Exporting a desktop preset rebuilds the crate for the preset's debug/release
+  profile, drops the library where `res://` resolves to in the exported game
+  (`Contents/Resources` inside a macOS bundle, next to the executable elsewhere)
+  and writes a platform-specific `.godot/rust/rust.gdextension` into the pack, so
+  the exported game loads exactly the scripts the editor did.
+- Cross-platform presets are skipped with a warning; the library has to be
+  cross-compiled and added by hand.
+
 **Language server** (`editor/rust_lsp.*`, `docs/rust/07-language-server.md`)
 
 - Starts `rust-analyzer` for the crate and forwards completion, hover,
@@ -163,7 +173,7 @@ godot --headless --path /path/to/project --build-solutions --quit
 Implemented (see `docs/rust/06-architecture.md` for the internals): project
 layout, build integration, diagnostics, extension loading, attachable scripts
 with derive macros, methods/signals, descriptor cache, tool scripts,
-rust-analyzer integration, script hot reload.
+rust-analyzer integration, script hot reload, export packaging.
 
 Not implemented yet (planned):
 
@@ -171,7 +181,7 @@ Not implemented yet (planned):
   the code they were created with, and node types need an editor restart.
 - RPCs (`@rpc` style multiplayer synchronization).
 - Native breakpoint debugging (DAP client -> `lldb-dap`/CodeLLDB).
-- Export support (shipping the `cdylib` with exported games).
+- Cross-compiled exports (exporting a Windows/Linux game from another platform).
 
 ## Tests
 
@@ -195,6 +205,7 @@ modules/rust/
 │   ├── rust_build.*           # cargo invocation, JSON diagnostics, threading
 │   ├── rust_build_panel.*     # Rust dock (Problems/Output)
 │   ├── rust_lsp.*             # rust-analyzer client (completion/hover/goto)
+│   ├── rust_export_plugin.*   # packages the cdylib + config into exports
 │   └── rust_editor_plugin.*   # run-bar button, build callback, extension load
 ├── icons/                     # editor icons shipped with the theme
 ├── support/godot-script/      # runtime crate: RustScript trait, ScriptInstance

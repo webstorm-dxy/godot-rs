@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/string/ustring.h"
+#include "core/templates/hash_set.h"
 #include "core/templates/vector.h"
 #include "../rust_paths.h"
 
@@ -59,6 +60,14 @@ public:
 	static void clear_reload_snapshots();
 	static void register_editor_settings();
 	static bool handle_cmdline();
+
+	// Feature tag used in .gdextension [libraries] keys: macos, windows, linuxbsd.
+	static String host_platform();
+	// The platform of an export, from the feature list the exporter passes along.
+	static String export_platform(const HashSet<String> &p_features);
+	// Configuration for an exported game: one platform, library next to the app.
+	// The editor keeps its own configuration under .godot/rust/.
+	static String make_export_config_text(const String &p_platform, const String &p_library_res);
 
 	static Error scaffold_project(const String &p_project_dir_global, const String &p_project_name);
 	static Error ensure_extension_config(const String &p_library_path_global = String());
