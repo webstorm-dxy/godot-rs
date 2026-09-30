@@ -99,13 +99,23 @@ GDExtensionManager::load_extension(快照配置)
    ▼
 RustScriptRegistry 按路径覆盖描述符（旧实例仍指旧库，安全）
    ▼
-刷新未修改的已打开场景 → 新实例使用新代码；描述符缓存同步更新
+RustScript::migrate_instances()
+   │  遍历模块记录过的对象（创建实例/占位实例时登记，扫描时清理已释放的）
+   │  old->get_property_state(值) → 新库 instance_create() → 值写回 → set_script_instance()
+   │  旧的占位实例：补一次 NOTIFICATION_READY（脚本此前从未运行过）
+   │  旧的真实例：只同步 _process/_physics_process 开关，不重跑 ready()
+   ▼
+描述符缓存同步更新；只有用到 #[derive(GodotClass)] 节点类型的项目才刷新场景
 ```
 
 要点：**不能卸载旧库**。Rust 不支持安全卸载，已存在的脚本实例里存着旧库的函数指针，
 `dlclose` 之后就是悬垂指针；所以热重载是“叠加新库”，旧库留到进程退出。
+**状态迁移**用的就是引擎自己换脚本时的办法（`ScriptInstance::get_property_state` + 新实例
+`set`）：能跟过去的是导出属性；私有字段、静态变量属于“旧库”，不会迁移。
+
 `#[derive(GodotClass)]` 节点类型在同一个进程里无法重复注册（类名冲突），所以这类项目仍然
-需要重启编辑器。上一轮会话的 `reload/` 目录会在下次启动时清掉。
+需要重启编辑器（这类项目会照旧重新加载场景，让新类的节点被创建出来）。
+上一轮会话的 `reload/` 目录会在下次启动时清掉。
 
 ## 3. 为什么要自己装载扩展
 
@@ -133,7 +143,7 @@ RustScriptRegistry 按路径覆盖描述符（旧实例仍指旧库，安全）
   等提示、`#[export(storage)]`）+ `#[godot_script_api]`（生命周期、`#[func]`、`#[signal]`），
   生成的代码就是下面的手写 API；
 - 脚本热重载：构建成功后把新库快照到 `.godot/rust/reload/<n>/` 并加载，旧库保持映射，
-  新实例与新打开的场景立刻用新代码（见下一节）；
+  运行中的实例被就地换到新库（导出属性值保留，见 2.2）；
 - 内置 rust-analyzer：补全、悬停、跳转定义、实时诊断（见 [07-language-server.md](07-language-server.md)）。
 
 尚未实现（路线图）：

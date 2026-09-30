@@ -2,6 +2,9 @@
 
 #include "core/object/script_language.h"
 
+#include "core/os/mutex.h"
+#include "core/templates/hash_map.h"
+
 // Resource representation of a single .rs file.
 //
 // The file itself only carries the source code; the script *class* it defines
@@ -15,6 +18,12 @@ class RustScript : public Script {
 	String source_code;
 	String path_cache;
 	bool valid = false;
+
+	// Objects that currently hold an instance of this script, so a freshly loaded
+	// library can take them over (see migrate_instances).
+	static Mutex tracked_mutex;
+	static HashMap<ObjectID, String> tracked_instances;
+	static void _track_instance(Object *p_object, const String &p_path);
 
 protected:
 	static void _bind_methods();
@@ -55,6 +64,12 @@ public:
 	virtual const Variant get_rpc_config() const override { return Variant(); }
 
 	Error load_source_code(const String &p_path);
+
+	// Re-creates the script instances with the library that has just been loaded,
+	// keeping the values of their exported properties. The editor calls this after
+	// (re)loading the library: Rust cannot unload a cdylib, so an instance that is
+	// left alone would keep running the code it was created with.
+	static void migrate_instances();
 
 	RustScript();
 };

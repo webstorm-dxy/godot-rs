@@ -74,10 +74,13 @@ like a `.gd` file.
   when the library has not been loaded (fresh checkout, failed build).
 - Scripts hot-reload inside the editor: a successful build is snapshotted to
   `.godot/rust/reload/<n>/` and loaded on top of the library that is already
-  mapped, so new instances and reopened scenes use the new code without a
-  restart. The old library is never unloaded (Rust cannot do that safely), and
-  projects using `#[derive(GodotClass)]` node types still need a restart because
-  a class cannot be registered twice in one process.
+  mapped. Running instances are then migrated in place - the exported property
+  values are carried over to an instance created by the new library - so a
+  rebuild neither restarts the editor nor loses state. Placeholders waiting for
+  a first build are upgraded the same way and get their `ready()` call. The old
+  library is never unloaded (Rust cannot do that safely), and projects using
+  `#[derive(GodotClass)]` node types still need a restart because a class cannot
+  be registered twice in one process.
 
 **Language server** (`editor/rust_lsp.*`, `docs/rust/07-language-server.md`)
 

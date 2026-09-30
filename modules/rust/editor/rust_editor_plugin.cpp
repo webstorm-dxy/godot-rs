@@ -6,6 +6,8 @@
 #include "rust_bindings.h"
 #include "rust_project.h"
 
+#include "../rust_script.h"
+
 #include "core/config/project_settings.h"
 #include "core/object/callable_mp.h"
 #include "core/extension/gdextension_manager.h"
@@ -145,9 +147,15 @@ void RustEditorPlugin::_try_load_extension() {
 	GDExtensionManager::LoadStatus status = manager->load_extension(config);
 	if (status == GDExtensionManager::LOAD_STATUS_OK) {
 		print_line(vformat("Rust extension loaded: %s", config));
-		// The registry now holds the descriptors of this library.
+		// The registry now holds the descriptors of this library: hand the objects
+		// that were waiting for it over to the real instances.
+		RustScript::migrate_instances();
 		RustProject::save_script_cache();
-		_reload_open_scenes();
+		// Script instances were migrated in place; only node types (#[derive(GodotClass)])
+		// need the scenes to be rebuilt to show up.
+		if (RustProject::project_uses_node_types()) {
+			_reload_open_scenes();
+		}
 	} else if (status == GDExtensionManager::LOAD_STATUS_FAILED) {
 		ERR_PRINT(vformat("Failed to load the Rust extension '%s'. Check the build output for details.", config));
 	}
@@ -189,9 +197,15 @@ void RustEditorPlugin::_hot_reload_scripts() {
 	GDExtensionManager *manager = GDExtensionManager::get_singleton();
 	GDExtensionManager::LoadStatus status = manager->load_extension(snapshot);
 	if (status == GDExtensionManager::LOAD_STATUS_OK) {
-		print_line(vformat("Rust library reloaded: %s (new script instances use it, existing ones keep the code they were created with)", snapshot));
+		print_line(vformat("Rust library reloaded: %s", snapshot));
+		// Running scripts move to the new library, keeping their property values.
+		RustScript::migrate_instances();
 		RustProject::save_script_cache();
-		_reload_open_scenes();
+		// Running scripts kept their state, so the scene itself does not have to be
+		// rebuilt unless it contains node types.
+		if (RustProject::project_uses_node_types()) {
+			_reload_open_scenes();
+		}
 	} else {
 		WARN_PRINT(vformat("Rust library rebuilt, but loading it failed (status %d). Restart the editor to use it; running the game always uses the new library.", (int)status));
 	}

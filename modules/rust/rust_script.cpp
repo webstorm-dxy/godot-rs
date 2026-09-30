@@ -6,6 +6,8 @@
 #include "core/config/engine.h"
 #include "core/io/file_access.h"
 #include "core/object/class_db.h"
+#include "core/object/object.h"
+#include "scene/main/node.h"
 
 // Defined in core/extension/gdextension_interface.cpp. It performs the same cast
 // the engine itself uses when attaching a GDExtension-created script instance
@@ -13,6 +15,17 @@
 ScriptInstance *gdextension_script_instance_wrap(void *p_instance);
 
 typedef void *(*RustScriptCreateFunc)(int64_t p_owner_id, int64_t p_script_id, int64_t p_language_id);
+
+Mutex RustScript::tracked_mutex;
+HashMap<ObjectID, String> RustScript::tracked_instances;
+
+void RustScript::_track_instance(Object *p_object, const String &p_path) {
+	if (p_object == nullptr || p_path.is_empty()) {
+		return;
+	}
+	MutexLock lock(tracked_mutex);
+	tracked_instances[p_object->get_instance_id()] = p_path;
+}
 
 static bool _rust_script_lookup(const String &p_path, RustScriptRegistry::ScriptType &r_type) {
 	RustScriptRegistry *registry = RustScriptRegistry::get_singleton();
@@ -136,6 +149,10 @@ ScriptInstance *RustScript::instance_create(Object *p_this) {
 		return nullptr;
 	}
 
+	// Remember the object: when a new library is loaded, this instance has to be
+	// re-created with it (and its property values carried over).
+	_track_instance(p_this, path_cache);
+
 	RustScriptCreateFunc create = (RustScriptCreateFunc)(intptr_t)type.create_fn;
 	void *instance = create((int64_t)p_this->get_instance_id(), (int64_t)get_instance_id(), (int64_t)RustLanguage::get_singleton()->get_instance_id());
 	if (instance == nullptr) {
@@ -160,10 +177,87 @@ PlaceHolderScriptInstance *RustScript::placeholder_instance_create(Object *p_thi
 		}
 		placeholder->update(properties, HashMap<StringName, Variant>());
 	}
+	_track_instance(p_this, path_cache);
 	return placeholder;
 #else
 	return nullptr;
 #endif
+}
+
+void RustScript::migrate_instances() {
+	Vector<ObjectID> tracked;
+	{
+		MutexLock lock(tracked_mutex);
+		for (const KeyValue<ObjectID, String> &E : tracked_instances) {
+			tracked.push_back(E.key);
+		}
+	}
+
+	Vector<ObjectID> stale;
+	for (const ObjectID &id : tracked) {
+		Object *object = ObjectDB::get_instance(id);
+		Ref<Script> script_ref;
+		if (object != nullptr) {
+			script_ref = object->get_script();
+		}
+		RustScript *script = Object::cast_to<RustScript>(script_ref.ptr());
+		// Gone, re-scripted, or not instantiable here (no library yet, or a plain
+		// script in the editor, which uses a placeholder): stop tracking it.
+		if (object == nullptr || script == nullptr || !script->can_instantiate()) {
+			stale.push_back(id);
+			continue;
+		}
+
+		ScriptInstance *current = object->get_script_instance();
+		if (current == nullptr) {
+			stale.push_back(id);
+			continue;
+		}
+
+		// Same dance the editor does when a script changes: keep the values of the
+		// exported properties, then let the fresh instance (created by the library
+		// that was just loaded) take over.
+		const bool was_placeholder = current->is_placeholder();
+		List<Pair<StringName, Variant>> state;
+		current->get_property_state(state);
+
+		ScriptInstance *fresh = script->instance_create(object);
+		if (fresh == nullptr) {
+			continue;
+		}
+		for (const Pair<StringName, Variant> &E : state) {
+			fresh->set(E.first, E.second);
+		}
+		object->set_script_instance(fresh);
+		object->notify_property_list_changed();
+
+		Node *node = Object::cast_to<Node>(object);
+		if (node == nullptr) {
+			continue;
+		}
+		if (was_placeholder) {
+			// The script never ran on this node (the scene was opened before the
+			// library existed), so give it the startup notification it missed; the
+			// engine then also enables processing for the new instance.
+			node->notification(Node::NOTIFICATION_READY);
+		} else {
+			// Keep the process flags in sync with the new code without re-running
+			// the script's own startup work.
+			if (fresh->has_method(StringName("_process"))) {
+				node->set_process(true);
+			}
+			if (fresh->has_method(StringName("_physics_process"))) {
+				node->set_physics_process(true);
+			}
+		}
+	}
+
+	if (!stale.is_empty()) {
+		MutexLock lock(tracked_mutex);
+		for (const ObjectID &id : stale) {
+			tracked_instances.erase(id);
+		}
+	}
 }
 
 Error RustScript::reload(bool p_keep_state) {
