@@ -133,6 +133,30 @@ add_file(res://.godot/rust/rust.gdextension) → pck 里放一份只含该平台
 跨平台导出（在 macOS 上导 Windows 等）不自动交叉编译，只打警告——见
 [08-exporting.md](08-exporting.md)。
 
+## 2.4 调试（lldb-dap）
+
+`RustDebug`（编辑器单例 `RustDebug`）是一个最小 DAP 客户端：
+
+```
+ScriptEditor::get_breakpoints()   →  "res://src/x.rs:12" 列表
+  ▼
+RustDebug::start(游戏本体, args, cwd, 断点)
+   │  execute_with_pipe(lldb-dap)
+   │  initialize → initialized 事件 → launch（不等响应）
+   │  setBreakpoints（每个文件一次）→ configurationDone
+   ▼
+读取线程解析 Content-Length 帧：response 按 id 交给请求方，
+event 只更新状态（stopped/continued/terminated/output）
+  ▼
+编辑器线程 update()：命中后拉 threads + stackTrace（+ scopes/variables）
+  ▼
+Rust 面板 Debug 页：状态、调用栈、变量、继续/单步
+```
+
+要点：**只有编辑器线程会跑编辑器代码**——读取线程只写状态，避免竞态；
+`launch` 必须先把断点和 `configurationDone` 发出去（LLDB 在配置完成前不回答它）；
+调试对象是**游戏进程**，所以栈里会混着 Godot 的 C++ 帧，变量也按原生布局显示。
+
 ## 3. 为什么要自己装载扩展
 
 引擎的扩展列表 `.godot/extension_list.cfg` 由编辑器根据 `res://` 下扫描到的
@@ -144,6 +168,8 @@ add_file(res://.godot/rust/rust.gdextension) → pck 里放一份只含该平台
 已支持：
 
 - 新建项目自动生成 Cargo 工程、绑定、扩展配置；
+- 调试：`RustDebug` 通过 `lldb-dap` 跑游戏，`.rs` 断点、单步、调用栈、变量都在编辑器里
+  （[09-debugging.md](09-debugging.md)）；
 - 导出：按预设构建，把动态库和一份针对该平台的 `.gdextension` 放进导出产物
   （[08-exporting.md](08-exporting.md)）；
 - F5 / `--build-solutions` 前自动 `cargo build`；错误在 Problems 面板与日志中可点击跳转；
@@ -169,7 +195,6 @@ add_file(res://.godot/rust/rust.gdextension) → pck 里放一份只含该平台
 | 项 | 说明 |
 | --- | --- |
 | RPC | `@rpc` 风格的多人同步 |
-| 原生断点调试 | lldb-dap / CodeLLDB（M5） |
 
 ## 5. 修改模块时的注意事项
 

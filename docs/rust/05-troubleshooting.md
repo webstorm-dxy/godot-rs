@@ -112,6 +112,17 @@ ERROR: delimiter with start key '//!' already exists.
 场景里的 Rust 类还没注册：库没构建（先 F5/点 Build），或场景在构建完成前就打开了。
 构建成功后模块会刷新**未修改**的已打开场景；有未保存改动时请手动重开场景。
 
+### 点 Debug 没反应 / 提示找不到 lldb-dap
+
+装上 Xcode 命令行工具（`xcode-select --install`），或在 **编辑器设置 → Rust →
+lldb_dap_path** 里填 `lldb-dap` 的绝对路径（CodeLLDB 等其它 DAP 适配器也可以）。
+
+### 断点命中不了（游戏直接跑完）
+
+- 断点要下在 `.rs` 文件里（行号左侧的红点），`Debug` 按钮只下发 `.rs` 断点；
+- 点 Debug 会自动用 debug 档重建，release 档没有完整行号信息，断点位置可能不准；
+- 会话开始后再改断点不会自动生效，重新点一次 Debug。
+
 ### 构建成功，但编辑器里看不到新类 / 改了类名没生效
 
 脚本（`.rs` 挂载的类）在构建后会**热重载**：日志出现 `Rust library reloaded` 就说明新代码已经

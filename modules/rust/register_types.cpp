@@ -29,6 +29,7 @@
 #include "editor/script/script_editor_plugin.h"
 
 #include "editor/rust_lsp.h"
+#include "editor/rust_debug.h"
 #include "editor/rust_project.h"
 
 static bool syntax_highlighter_registered = false;
@@ -185,6 +186,13 @@ void initialize_rust_module(ModuleInitializationLevel p_level) {
 		Engine::Singleton rust_lsp_singleton("RustLsp", RustLsp::get_singleton());
 		rust_lsp_singleton.editor_only = true;
 		Engine::get_singleton()->add_singleton(rust_lsp_singleton);
+
+		// lldb-dap bridge for native breakpoint debugging, "RustDebug" in the editor.
+		GDREGISTER_CLASS(RustDebug);
+		RustDebug::create_singleton();
+		Engine::Singleton rust_debug_singleton("RustDebug", RustDebug::get_singleton());
+		rust_debug_singleton.editor_only = true;
+		Engine::get_singleton()->add_singleton(rust_debug_singleton);
 
 		RustProject::handle_cmdline();
 	}

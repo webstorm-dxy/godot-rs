@@ -1,20 +1,24 @@
 #include "rust_build_panel.h"
 
 #include "rust_build.h"
+#include "rust_debug.h"
 #include "rust_project.h"
 
 #include "core/config/project_settings.h"
 #include "core/io/resource_loader.h"
+#include "core/os/os.h"
 #include "core/object/callable_mp.h"
 #include "editor/editor_log.h"
 #include "editor/settings/editor_settings.h"
 #include "editor/editor_main_screen.h"
+#include "editor/editor_interface.h"
 #include "editor/editor_node.h"
 #include "editor/script/script_editor_plugin.h"
 #include "scene/gui/box_container.h"
 #include "scene/gui/button.h"
 #include "scene/gui/label.h"
 #include "scene/gui/rich_text_label.h"
+#include "scene/gui/split_container.h"
 #include "scene/gui/tab_container.h"
 #include "scene/gui/tree.h"
 
@@ -88,6 +92,91 @@ RustBuildPanel::RustBuildPanel() {
 	output_view->set_h_size_flags(Control::SIZE_EXPAND_FILL);
 	output_view->set_v_size_flags(Control::SIZE_EXPAND_FILL);
 	tabs->add_child(output_view);
+
+	// Debug tab: breakpoints come from the script editor, the session itself from
+	// RustDebug (lldb-dap).
+	VBoxContainer *debug_box = memnew(VBoxContainer);
+	debug_box->set_name("Debug");
+
+	HBoxContainer *debug_toolbar = memnew(HBoxContainer);
+	debug_box->add_child(debug_toolbar);
+
+	debug_button = memnew(Button);
+	debug_button->set_text("Debug");
+	debug_button->set_tooltip_text("Build, then run the project under lldb-dap with the breakpoints set in .rs files");
+	debug_button->connect(SceneStringName(pressed), callable_mp(this, &RustBuildPanel::_debug_start_pressed));
+	debug_toolbar->add_child(debug_button);
+
+	debug_stop_button = memnew(Button);
+	debug_stop_button->set_text("Stop");
+	debug_stop_button->set_disabled(true);
+	debug_stop_button->connect(SceneStringName(pressed), callable_mp(this, &RustBuildPanel::_debug_stop_pressed));
+	debug_toolbar->add_child(debug_stop_button);
+
+	debug_continue_button = memnew(Button);
+	debug_continue_button->set_text("Continue");
+	debug_continue_button->set_disabled(true);
+	debug_continue_button->connect(SceneStringName(pressed), callable_mp(RustDebug::get_singleton(), &RustDebug::continue_));
+	debug_toolbar->add_child(debug_continue_button);
+
+	debug_step_over_button = memnew(Button);
+	debug_step_over_button->set_text("Step Over");
+	debug_step_over_button->set_disabled(true);
+	debug_step_over_button->connect(SceneStringName(pressed), callable_mp(RustDebug::get_singleton(), &RustDebug::step_over));
+	debug_toolbar->add_child(debug_step_over_button);
+
+	debug_step_in_button = memnew(Button);
+	debug_step_in_button->set_text("Step Into");
+	debug_step_in_button->set_disabled(true);
+	debug_step_in_button->connect(SceneStringName(pressed), callable_mp(RustDebug::get_singleton(), &RustDebug::step_in));
+	debug_toolbar->add_child(debug_step_in_button);
+
+	debug_step_out_button = memnew(Button);
+	debug_step_out_button->set_text("Step Out");
+	debug_step_out_button->set_disabled(true);
+	debug_step_out_button->connect(SceneStringName(pressed), callable_mp(RustDebug::get_singleton(), &RustDebug::step_out));
+	debug_toolbar->add_child(debug_step_out_button);
+
+	debug_status = memnew(Label);
+	debug_status->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	debug_status->set_horizontal_alignment(HORIZONTAL_ALIGNMENT_RIGHT);
+	debug_toolbar->add_child(debug_status);
+
+	HSplitContainer *debug_split = memnew(HSplitContainer);
+	debug_split->set_v_size_flags(Control::SIZE_EXPAND_FILL);
+	debug_box->add_child(debug_split);
+
+	debug_stack = memnew(Tree);
+	debug_stack->set_columns(3);
+	debug_stack->set_column_titles_visible(true);
+	debug_stack->set_column_title(0, "Function");
+	debug_stack->set_column_title(1, "File");
+	debug_stack->set_column_title(2, "Line");
+	debug_stack->set_column_expand(0, true);
+	debug_stack->set_column_expand(1, false);
+	debug_stack->set_column_custom_minimum_width(1, 200);
+	debug_stack->set_column_expand(2, false);
+	debug_stack->set_column_custom_minimum_width(2, 60);
+	debug_stack->set_hide_root(true);
+	debug_stack->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	debug_stack->connect("item_activated", callable_mp(this, &RustBuildPanel::_debug_stack_activated));
+	debug_split->add_child(debug_stack);
+
+	debug_variables = memnew(Tree);
+	debug_variables->set_columns(3);
+	debug_variables->set_column_titles_visible(true);
+	debug_variables->set_column_title(0, "Name");
+	debug_variables->set_column_title(1, "Value");
+	debug_variables->set_column_title(2, "Type");
+	debug_variables->set_column_expand(0, true);
+	debug_variables->set_column_expand(1, true);
+	debug_variables->set_column_expand(2, false);
+	debug_variables->set_column_custom_minimum_width(2, 120);
+	debug_variables->set_hide_root(true);
+	debug_variables->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	debug_split->add_child(debug_variables);
+
+	tabs->add_child(debug_box);
 
 	set_process(true);
 }
@@ -199,7 +288,165 @@ void RustBuildPanel::_refresh_problems() {
 	}
 }
 
+Dictionary RustBuildPanel::_collect_breakpoints() const {
+	Dictionary out;
+	ScriptEditor *script_editor = ScriptEditor::get_singleton();
+	if (script_editor == nullptr) {
+		return out;
+	}
+	List<String> breakpoints;
+	script_editor->get_breakpoints(&breakpoints);
+	for (const String &entry : breakpoints) {
+		// "res://src/player.rs:12"
+		const int separator = entry.rfind(":");
+		if (separator <= 0) {
+			continue;
+		}
+		const String path = entry.substr(0, separator);
+		const int line = entry.substr(separator + 1).to_int();
+		if (!path.ends_with(".rs") || line <= 0) {
+			continue;
+		}
+		if (!out.has(path)) {
+			out[path] = Array();
+		}
+		Array lines = out[path];
+		lines.push_back(line);
+		out[path] = lines;
+	}
+	return out;
+}
+
+void RustBuildPanel::_debug_start_pressed() {
+	RustDebug *debug = RustDebug::get_singleton();
+	if (debug == nullptr || debug->is_running()) {
+		return;
+	}
+
+	// Debug builds carry the debug info the adapter needs.
+	RustBuild *build = RustBuild::get_singleton();
+	if (build == nullptr || !build->build_blocking("debug")) {
+		status_label->set_text("Build failed");
+		debug_status->set_text("build failed");
+		return;
+	}
+
+	const String project_dir = ProjectSettings::get_singleton()->globalize_path("res://").trim_suffix("/");
+	PackedStringArray args;
+	args.push_back("--path");
+	args.push_back(project_dir);
+	const Dictionary breakpoints = _collect_breakpoints();
+	if (breakpoints.is_empty()) {
+		debug_status->set_text("no .rs breakpoints set");
+	}
+	debug->start_gd(OS::get_singleton()->get_executable_path(), args, project_dir, breakpoints);
+	debug_opened_location = String();
+}
+
+void RustBuildPanel::_debug_stop_pressed() {
+	RustDebug *debug = RustDebug::get_singleton();
+	if (debug != nullptr) {
+		debug->stop();
+	}
+	debug_opened_location = String();
+}
+
+void RustBuildPanel::_debug_stack_activated() {
+	TreeItem *selected = debug_stack->get_selected();
+	if (selected == nullptr) {
+		return;
+	}
+	const String file = selected->get_metadata(1);
+	const int line = selected->get_metadata(2);
+	if (!file.is_empty()) {
+		_navigate_to(file, line, 0);
+	}
+	_refresh_debug_variables(selected->get_metadata(0));
+}
+
+void RustBuildPanel::_refresh_debug_variables(int p_frame) {
+	debug_variables->clear();
+	RustDebug *debug = RustDebug::get_singleton();
+	if (debug == nullptr) {
+		return;
+	}
+	const Array variables = debug->get_variables(p_frame);
+	TreeItem *root = debug_variables->create_item();
+	for (int i = 0; i < variables.size(); i++) {
+		const Dictionary variable = variables[i];
+		TreeItem *item = debug_variables->create_item(root);
+		item->set_text(0, variable.get("name", String()));
+		item->set_text(1, variable.get("value", String()));
+		item->set_text(2, variable.get("type", String()));
+	}
+}
+
+void RustBuildPanel::_refresh_debug() {
+	RustDebug *debug = RustDebug::get_singleton();
+	if (debug == nullptr || debug_status == nullptr) {
+		return;
+	}
+	debug->update();
+	const String state = debug->get_state();
+	const String adapter = debug->get_adapter_path();
+	debug_status->set_text(state + (adapter.is_empty() ? String() : " · " + adapter.get_file()));
+
+	const bool running = debug->is_running();
+	const bool stopped = state == "stopped";
+	debug_button->set_disabled(running);
+	debug_stop_button->set_disabled(!running);
+	debug_continue_button->set_disabled(!stopped);
+	debug_step_over_button->set_disabled(!stopped);
+	debug_step_in_button->set_disabled(!stopped);
+	debug_step_out_button->set_disabled(!stopped);
+
+	if (!stopped) {
+		if (debug_opened_location != String()) {
+			debug_stack->clear();
+			debug_variables->clear();
+			debug_opened_location = String();
+		}
+		return;
+	}
+
+	const Dictionary location = debug->get_stop_location();
+	const String current = vformat("%s:%d", location.get("file", ""), (int)location.get("line", 0));
+	if (current == debug_opened_location) {
+		return;
+	}
+	debug_opened_location = current;
+
+	const String file = location.get("file", "");
+	if (!file.is_empty()) {
+		_navigate_to(file, (int)location.get("line", 0), 0);
+	}
+
+	debug_stack->clear();
+	const Array stack = debug->get_stack();
+	TreeItem *root = debug_stack->create_item();
+	TreeItem *first = nullptr;
+	for (int i = 0; i < stack.size(); i++) {
+		const Dictionary frame = stack[i];
+		TreeItem *item = debug_stack->create_item(root);
+		item->set_text(0, frame.get("name", String()));
+		item->set_text(1, frame.get("file", String()));
+		item->set_text(2, itos((int)frame.get("line", 0)));
+		item->set_metadata(0, i);
+		item->set_metadata(1, frame.get("file", String()));
+		item->set_metadata(2, (int)frame.get("line", 0));
+		if (i == 0) {
+			first = item;
+		}
+	}
+	if (first != nullptr) {
+		first->select(0);
+	}
+	_refresh_debug_variables(0);
+}
+
 void RustBuildPanel::update_ui() {
+	_refresh_debug();
+
 	RustBuild *build = RustBuild::get_singleton();
 	if (build == nullptr) {
 		return;

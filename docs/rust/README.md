@@ -21,6 +21,7 @@ Godot 的一等语言，用法尽量贴近 GDScript。
 | [06-architecture.md](06-architecture.md) | 模块内部原理、当前支持范围与路线图 |
 | [07-language-server.md](07-language-server.md) | 内置 rust-analyzer：补全、悬停、跳转、实时诊断 |
 | [08-exporting.md](08-exporting.md) | 导出游戏：动态库怎么进产物、跨平台怎么办 |
+| [09-debugging.md](09-debugging.md) | 断点调试：`.rs` 里打断点、单步、调用栈、变量 |
 
 ## 30 秒快速上手（已编译好引擎的前提下）
 

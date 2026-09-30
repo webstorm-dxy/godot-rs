@@ -99,6 +99,16 @@ like a `.gd` file.
 - Cross-platform presets are skipped with a warning; the library has to be
   cross-compiled and added by hand.
 
+**Debugging** (`editor/rust_debug.*`, `docs/rust/09-debugging.md`)
+
+- `RustDebug` is a small Debug Adapter Protocol client for `lldb-dap`. Breakpoints
+  are the editor's own (toggle them in `.rs` files, they persist with the
+  project); the Rust dock's *Debug* page starts a session and shows state, call
+  stack and variables with continue / step over / in / out.
+- `launch` is sent before the breakpoints and `configurationDone` because lldb
+  only answers it once the configuration is done; the reader thread never runs
+  editor code, it records state that `update()` turns into requests.
+
 **Language server** (`editor/rust_lsp.*`, `docs/rust/07-language-server.md`)
 
 - Starts `rust-analyzer` for the crate and forwards completion, hover,
@@ -173,14 +183,13 @@ godot --headless --path /path/to/project --build-solutions --quit
 Implemented (see `docs/rust/06-architecture.md` for the internals): project
 layout, build integration, diagnostics, extension loading, attachable scripts
 with derive macros, methods/signals, descriptor cache, tool scripts,
-rust-analyzer integration, script hot reload, export packaging.
+rust-analyzer integration, script hot reload, lldb-dap debugging, export packaging.
 
 Not implemented yet (planned):
 
 - Hot reload state migration: new code runs for new instances, existing ones keep
   the code they were created with, and node types need an editor restart.
 - RPCs (`@rpc` style multiplayer synchronization).
-- Native breakpoint debugging (DAP client -> `lldb-dap`/CodeLLDB).
 - Cross-compiled exports (exporting a Windows/Linux game from another platform).
 
 ## Tests
