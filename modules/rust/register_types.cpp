@@ -23,21 +23,55 @@
 #include "editor/rust_build.h"
 #include "editor/rust_editor_plugin.h"
 #include "editor/rust_highlighter.h"
-
-#include "editor/editor_node.h"
+#include "editor/script/script_editor_base.h"
 #include "editor/script/script_editor_plugin.h"
 
-// Runs once the editor (and with it the script editor) has been created.
-static void _register_syntax_highlighter() {
-	if (ScriptEditor::get_singleton() == nullptr) {
+#include "editor/rust_lsp.h"
+#include "editor/rust_project.h"
+
+static bool syntax_highlighter_registered = false;
+
+// Registers the .rs highlighter with the script editor. Called once the editor
+// exists; also callable again (the editor plugin checks on startup) in case this
+// ran before the script editor was built.
+void rust_register_syntax_highlighter() {
+	if (syntax_highlighter_registered || ScriptEditor::get_singleton() == nullptr) {
 		return;
 	}
+	syntax_highlighter_registered = true;
+
 	Ref<RustSyntaxHighlighter> rust_syntax_highlighter;
 	rust_syntax_highlighter.instantiate();
 	ScriptEditor::get_singleton()->register_syntax_highlighter(rust_syntax_highlighter);
+	print_line("Rust: syntax highlighter registered for .rs scripts");
+
+	// Scripts that are already open picked a highlighter when their tab was made,
+	// so give them the Rust one as well. (get_open_script_editors() is the bound
+	// accessor; the C++ one is private to ScriptEditor.)
+	TypedArray<ScriptEditorBase> open_editors = ScriptEditor::get_singleton()->call("get_open_script_editors");
+	int applied = 0;
+	for (int i = 0; i < open_editors.size(); i++) {
+		ScriptEditorBase *base = Object::cast_to<ScriptEditorBase>(open_editors[i]);
+		TextEditorBase *editor = Object::cast_to<TextEditorBase>(base);
+		if (editor == nullptr || base->get_edited_resource().is_null()) {
+			continue;
+		}
+		Ref<Script> script = base->get_edited_resource();
+		if (script.is_null() || script->get_language() != RustLanguage::get_singleton()) {
+			continue;
+		}
+		Ref<EditorSyntaxHighlighter> instance = rust_syntax_highlighter->_create();
+		if (instance.is_null()) {
+			continue;
+		}
+		editor->add_syntax_highlighter(instance);
+		editor->set_syntax_highlighter(instance);
+		applied++;
+	}
+	if (applied > 0) {
+		print_line(vformat("Rust: syntax highlighter applied to %d open script(s)", applied));
+	}
 }
-#include "editor/rust_lsp.h"
-#include "editor/rust_project.h"
 #endif
 
 static RustLanguage *rust_language = nullptr;
@@ -127,7 +161,7 @@ void initialize_rust_module(ModuleInitializationLevel p_level) {
 		// language name, so this one answers to "Rust". Registration has to wait
 		// until the script editor exists (same dance GDScript does).
 		GDREGISTER_CLASS(RustSyntaxHighlighter);
-		EditorNode::add_init_callback(_register_syntax_highlighter);
+		EditorNode::add_init_callback(rust_register_syntax_highlighter);
 
 		// rust-analyzer bridge, reachable from the editor as "RustLsp".
 		GDREGISTER_CLASS(RustLsp);

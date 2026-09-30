@@ -38,8 +38,9 @@ static const char *rust_macros[] = {
 	nullptr
 };
 PackedStringArray RustSyntaxHighlighter::_get_supported_languages() const {
-	// Matched against ScriptLanguage::get_name() of the edited script.
-	return PackedStringArray{ "Rust" };
+	// The script editor matches this against ScriptLanguage::get_name() for scripts
+	// and against the file extension for everything else.
+	return PackedStringArray{ "Rust", "rs" };
 }
 
 Ref<EditorSyntaxHighlighter> RustSyntaxHighlighter::_create() const {

@@ -6,6 +6,7 @@
 #include "rust_bindings.h"
 #include "rust_project.h"
 
+#include "../register_types.h"
 #include "../rust_script.h"
 
 #include "core/config/project_settings.h"
@@ -53,6 +54,9 @@ void RustEditorPlugin::_notification(int p_what) {
 				}
 			}
 			RustProject::register_editor_settings();
+			// Safety net: the highlighter is normally registered from the editor init
+			// callbacks, but the script editor may not have existed back then.
+			rust_register_syntax_highlighter();
 			set_process(true);
 			callable_mp(this, &RustEditorPlugin::_check_project).call_deferred();
 		} break;
