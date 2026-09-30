@@ -87,6 +87,26 @@ modules/rust/
 
 （`type` 就是 Godot 的 `Variant::Type` 编号，例如 3 = float、4 = String。）
 
+## 2.2 热重载（同一次编辑器会话内换代码）
+
+```
+构建成功 → RustProject::snapshot_library()
+   │  复制 <target>/<profile>/<lib> 到 .godot/rust/reload/<n>/<profile>/<lib>
+   │  并生成一份指向它的 .gdextension
+   ▼
+GDExtensionManager::load_extension(快照配置)
+   │  Rust 侧重新执行 on_stage_init(Scene) → register_script_type()
+   ▼
+RustScriptRegistry 按路径覆盖描述符（旧实例仍指旧库，安全）
+   ▼
+刷新未修改的已打开场景 → 新实例使用新代码；描述符缓存同步更新
+```
+
+要点：**不能卸载旧库**。Rust 不支持安全卸载，已存在的脚本实例里存着旧库的函数指针，
+`dlclose` 之后就是悬垂指针；所以热重载是“叠加新库”，旧库留到进程退出。
+`#[derive(GodotClass)]` 节点类型在同一个进程里无法重复注册（类名冲突），所以这类项目仍然
+需要重启编辑器。上一轮会话的 `reload/` 目录会在下次启动时清掉。
+
 ## 3. 为什么要自己装载扩展
 
 引擎的扩展列表 `.godot/extension_list.cfg` 由编辑器根据 `res://` 下扫描到的
@@ -112,6 +132,8 @@ modules/rust/
 - 派生宏：`#[derive(RustScript)]`（字段、`#[export]` 及 `range/enum/flags/file/dir/multiline`
   等提示、`#[export(storage)]`）+ `#[godot_script_api]`（生命周期、`#[func]`、`#[signal]`），
   生成的代码就是下面的手写 API；
+- 脚本热重载：构建成功后把新库快照到 `.godot/rust/reload/<n>/` 并加载，旧库保持映射，
+  新实例与新打开的场景立刻用新代码（见下一节）；
 - 内置 rust-analyzer：补全、悬停、跳转定义、实时诊断（见 [07-language-server.md](07-language-server.md)）。
 
 尚未实现（路线图）：
@@ -119,7 +141,6 @@ modules/rust/
 | 项 | 说明 |
 | --- | --- |
 | RPC | `@rpc` 风格的多人同步 |
-| 热重载 | 库重载后的类与实例状态迁移（对应计划里的 M4） |
 | 原生断点调试 | lldb-dap / CodeLLDB（M5） |
 | 导出 | 把 cdylib 打进导出产物（M6） |
 
@@ -128,7 +149,8 @@ modules/rust/
 - 语言层的分隔符必须“全部由符号组成且不重复”，否则编辑器会报错（见
   [05-troubleshooting.md](05-troubleshooting.md)）；
 - Rust 侧与 C++ 侧通过**实例 ID**（不是裸指针）交换对象，避免悬垂；
-- `RustScriptRegistry` 是引擎单例，扩展在 Scene 级初始化时注册，重载扩展时需重新注册
-  （热重载落地时要处理）；
+- `RustScriptRegistry` 是引擎单例，扩展在 Scene 级初始化时注册：热重载就是再加载一份库，
+  Rust 侧会重新调用 `register_script_type`，按 `res://` 路径覆盖旧条目（旧实例仍持有旧库的
+  代码指针，因此**不能卸载**旧库）；
 - `vendor/gdext` 保持不修改：绑定由本引擎导出的 JSON 生成（`api-custom-json`），
   这样改了引擎也不需要 patch 绑定 crate。

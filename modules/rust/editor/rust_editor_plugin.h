@@ -17,6 +17,10 @@ class RustEditorPlugin : public EditorPlugin {
 
 	void _check_project();
 	void _try_load_extension();
+	// Loads a snapshot of the freshly built library, so the editor picks up script
+	// changes without a restart; the previously loaded library stays mapped.
+	void _hot_reload_scripts();
+	void _reload_open_scenes();
 	void _build_pressed();
 
 protected:

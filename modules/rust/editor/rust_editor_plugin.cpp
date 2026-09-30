@@ -85,7 +85,7 @@ void RustEditorPlugin::_notification(int p_what) {
 			if (!manager->is_extension_loaded(config)) {
 				_try_load_extension();
 			} else {
-				WARN_PRINT("Rust library rebuilt. Restart the editor to refresh Rust classes in the editor; running the game always uses the new library.");
+				_hot_reload_scripts();
 			}
 			// Refresh .godot/rust/script_cache.json with what is loaded right now.
 			RustProject::save_script_cache();
@@ -103,6 +103,8 @@ void RustEditorPlugin::_check_project() {
 
 	RustBindings::ensure();
 	RustProject::sync_crate();
+	// Snapshots of earlier sessions are no longer mapped by anyone.
+	RustProject::clear_reload_snapshots();
 	// Descriptors from the last build keep the editor usable for scripts whose
 	// library is not loaded (yet).
 	RustProject::load_script_cache();
@@ -145,24 +147,53 @@ void RustEditorPlugin::_try_load_extension() {
 		print_line(vformat("Rust extension loaded: %s", config));
 		// The registry now holds the descriptors of this library.
 		RustProject::save_script_cache();
-
-		// Scenes opened before the build could not instantiate Rust node types;
-		// refresh the ones without unsaved changes so they show up.
-		EditorNode *editor = EditorNode::get_singleton();
-		if (editor != nullptr) {
-			EditorData &data = editor->get_editor_data();
-			for (int i = 0; i < data.get_edited_scene_count(); i++) {
-				if (data.is_scene_changed(i)) {
-					continue;
-				}
-				const String scene_path = data.get_scene_path(i);
-				if (!scene_path.is_empty()) {
-					editor->reload_scene(scene_path);
-				}
-			}
-		}
+		_reload_open_scenes();
 	} else if (status == GDExtensionManager::LOAD_STATUS_FAILED) {
 		ERR_PRINT(vformat("Failed to load the Rust extension '%s'. Check the build output for details.", config));
+	}
+}
+
+void RustEditorPlugin::_reload_open_scenes() {
+	// Scenes opened before the library was loaded could not instantiate the Rust
+	// classes; refresh the ones without unsaved changes so they show up.
+	EditorNode *editor = EditorNode::get_singleton();
+	if (editor == nullptr) {
+		return;
+	}
+	EditorData &data = editor->get_editor_data();
+	for (int i = 0; i < data.get_edited_scene_count(); i++) {
+		if (data.is_scene_changed(i)) {
+			continue;
+		}
+		const String scene_path = data.get_scene_path(i);
+		if (!scene_path.is_empty()) {
+			editor->reload_scene(scene_path);
+		}
+	}
+}
+
+void RustEditorPlugin::_hot_reload_scripts() {
+	if (RustProject::project_uses_node_types()) {
+		// A second copy of the library would register the same node classes again,
+		// which the engine rejects; scripts stay on the code that is loaded.
+		WARN_PRINT("Rust library rebuilt. Node types (#[derive(GodotClass)]) need an editor restart; scripts keep running the loaded code until then.");
+		return;
+	}
+
+	const String snapshot = RustProject::snapshot_library(RustProject::find_existing_library());
+	if (snapshot.is_empty()) {
+		WARN_PRINT("Rust library rebuilt, but it could not be prepared for a reload. Restart the editor to use it; running the game always uses the new library.");
+		return;
+	}
+
+	GDExtensionManager *manager = GDExtensionManager::get_singleton();
+	GDExtensionManager::LoadStatus status = manager->load_extension(snapshot);
+	if (status == GDExtensionManager::LOAD_STATUS_OK) {
+		print_line(vformat("Rust library reloaded: %s (new script instances use it, existing ones keep the code they were created with)", snapshot));
+		RustProject::save_script_cache();
+		_reload_open_scenes();
+	} else {
+		WARN_PRINT(vformat("Rust library rebuilt, but loading it failed (status %d). Restart the editor to use it; running the game always uses the new library.", (int)status));
 	}
 }
 

@@ -114,7 +114,14 @@ ERROR: delimiter with start key '//!' already exists.
 
 ### 构建成功，但编辑器里看不到新类 / 改了类名没生效
 
-编辑器内的类信息需要重新加载扩展或重启编辑器。运行游戏不受影响（总是用新库）。
+脚本（`.rs` 挂载的类）在构建后会**热重载**：日志出现 `Rust library reloaded` 就说明新代码已经
+生效，重新打开场景即可看到新的属性/方法/信号；运行游戏始终用最新库。
+
+以下情况仍需重启编辑器（或 `Project → Reload Current Project`）：
+
+- 项目里用了 `#[derive(GodotClass)]` 节点类型（日志会提示 `Node types (#[derive(GodotClass)]) need an editor restart`）；
+- 改了 `src/lib.rs` 里的扩展入口（`on_stage_init` 注册逻辑）；
+- 需要把**已经存在的**实例换成新代码（旧实例保持创建时的代码）。
 
 ### `Rust: editor icon 'BuildRust' could not be resolved.`
 
@@ -169,7 +176,7 @@ Syntax Error: expected SEMICOLON
 2. 构建成功过（构建后描述符会写进 `.godot/rust/script_cache.json`，以后即使库还没加载
    也能显示类名/属性/方法/信号）；
 3. 如果缓存文件被删了（例如清空了 `.godot/`），先按一次 Build 或 F5，让描述符重新生成；
-4. 库重新构建后，编辑器里的类信息要重启编辑器才会刷新（运行游戏不受影响）。
+4. 库重新构建后脚本会热重载（见上一节）；只有 `#[derive(GodotClass)]` 节点类型需要重启编辑器。
 
 ## 引擎开发相关
 

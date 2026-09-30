@@ -632,6 +632,79 @@ void RustProject::load_script_cache() {
 	}
 }
 
+bool RustProject::project_uses_node_types() {
+	Vector<String> sources;
+	_collect_rust_sources(get_crate_root_global(), sources);
+	for (const String &source : sources) {
+		Ref<FileAccess> file = FileAccess::open(source, FileAccess::READ);
+		if (file.is_valid() && file->get_as_utf8_string().contains("GodotClass")) {
+			return true;
+		}
+	}
+	return false;
+}
+
+String RustProject::snapshot_library(const String &p_library_path_global) {
+	if (p_library_path_global.is_empty() || !FileAccess::exists(p_library_path_global)) {
+		return String();
+	}
+
+	const String reload_dir_res = RustPaths::get_data_dir_res().path_join("reload");
+	const String reload_dir_global = RustPaths::get_data_dir_global().path_join("reload");
+	DirAccess::make_dir_recursive_absolute(reload_dir_global);
+
+	// One directory per reload: the previous libraries must survive on disk, since
+	// the editor keeps them mapped for the instances that already exist.
+	int index = 1;
+	while (FileAccess::exists(reload_dir_global.path_join(vformat("%d/reload.gdextension", index)))) {
+		index++;
+	}
+
+	// Keep the target-dir layout (<target>/<profile>/<library>), so the generated
+	// config only needs a different base directory.
+	const String profile = p_library_path_global.get_base_dir().get_file();
+	const String snapshot_global = reload_dir_global.path_join(itos(index)).path_join(profile).path_join(p_library_path_global.get_file());
+	DirAccess::make_dir_recursive_absolute(snapshot_global.get_base_dir());
+	if (DirAccess::copy_absolute(p_library_path_global, snapshot_global) != OK) {
+		return String();
+	}
+
+	const String config_global = reload_dir_global.path_join(vformat("%d/reload.gdextension", index));
+	if (_write_extension_config(config_global, get_crate_name(), snapshot_global) != OK) {
+		return String();
+	}
+	return reload_dir_res.path_join(vformat("%d/reload.gdextension", index));
+}
+
+// DirAccess::remove_absolute() only removes empty directories.
+static void _remove_tree(const String &p_dir) {
+	Ref<DirAccess> dir = DirAccess::open(p_dir);
+	if (dir.is_valid()) {
+		dir->list_dir_begin();
+		for (String entry = dir->get_next(); !entry.is_empty(); entry = dir->get_next()) {
+			// get_next() also yields "." and ".." -- recursing into those never ends.
+			if (entry == "." || entry == "..") {
+				continue;
+			}
+			const String path = p_dir.path_join(entry);
+			if (dir->current_is_dir()) {
+				_remove_tree(path);
+			} else {
+				DirAccess::remove_absolute(path);
+			}
+		}
+		dir->list_dir_end();
+	}
+	DirAccess::remove_absolute(p_dir);
+}
+
+void RustProject::clear_reload_snapshots() {
+	const String reload_dir_global = RustPaths::get_data_dir_global().path_join("reload");
+	if (DirAccess::dir_exists_absolute(reload_dir_global)) {
+		_remove_tree(reload_dir_global);
+	}
+}
+
 void RustProject::register_editor_settings() {
 #ifdef TOOLS_ENABLED
 	if (EditorSettings::get_singleton() == nullptr) {
@@ -678,6 +751,13 @@ Error RustProject::_write_file(const String &p_path, const String &p_content) {
 Error RustProject::_write_extension_config(const String &p_config_global, const String &p_crate_name, const String &p_library_path_global) {
 	String crate = p_crate_name.is_empty() ? String("rust_game") : p_crate_name;
 	String base = "res://.godot/rust/target/";
+	if (!p_library_path_global.is_empty()) {
+		// The caller wants the entries to point at a specific file (the snapshot the
+		// editor hot-reloads), which lives outside the cargo target directory.
+		const String dir = p_library_path_global.get_base_dir().get_base_dir().replace("\\", "/");
+		const String res_dir = ProjectSettings::get_singleton()->localize_path(dir);
+		base = (res_dir.is_empty() ? dir : res_dir).trim_suffix("/") + "/";
+	}
 	const String darwin = _darwin_lib(crate);
 	const String windows = _windows_lib(crate);
 	const String linux = _linux_lib(crate);

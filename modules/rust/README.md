@@ -72,6 +72,12 @@ like a `.gd` file.
 - Descriptors are cached in `.godot/rust/script_cache.json` after every build, so
   the editor still knows class name, base type, properties, methods and signals
   when the library has not been loaded (fresh checkout, failed build).
+- Scripts hot-reload inside the editor: a successful build is snapshotted to
+  `.godot/rust/reload/<n>/` and loaded on top of the library that is already
+  mapped, so new instances and reopened scenes use the new code without a
+  restart. The old library is never unloaded (Rust cannot do that safely), and
+  projects using `#[derive(GodotClass)]` node types still need a restart because
+  a class cannot be registered twice in one process.
 
 **Language server** (`editor/rust_lsp.*`, `docs/rust/07-language-server.md`)
 
@@ -147,12 +153,12 @@ godot --headless --path /path/to/project --build-solutions --quit
 Implemented (see `docs/rust/06-architecture.md` for the internals): project
 layout, build integration, diagnostics, extension loading, attachable scripts
 with derive macros, methods/signals, descriptor cache, tool scripts,
-rust-analyzer integration.
+rust-analyzer integration, script hot reload.
 
 Not implemented yet (planned):
 
-- Hot reload of class definitions inside the editor (`reloadable` is currently
-  disabled in the generated configuration; a rebuild needs an editor restart).
+- Hot reload state migration: new code runs for new instances, existing ones keep
+  the code they were created with, and node types need an editor restart.
 - RPCs (`@rpc` style multiplayer synchronization).
 - Native breakpoint debugging (DAP client -> `lldb-dap`/CodeLLDB).
 - Export support (shipping the `cdylib` with exported games).

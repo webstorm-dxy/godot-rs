@@ -47,6 +47,16 @@ public:
 	// Fills the script registry from the cache for everything the loaded library
 	// does not describe itself; safe to call repeatedly.
 	static void load_script_cache();
+	// True when the crate declares node types with #[derive(GodotClass)]; those
+	// cannot be registered twice in one process, so hot reload only covers scripts.
+	static bool project_uses_node_types();
+	// Copies the freshly built library to .godot/rust/reload/<n>/ and writes a
+	// matching .gdextension config, so the editor can load the new code while the
+	// previous library stays mapped (Rust cannot unload: live instances would
+	// point into freed code). Returns the config path, or empty when it failed.
+	static String snapshot_library(const String &p_library_path_global);
+	// Drops the snapshots of earlier sessions.
+	static void clear_reload_snapshots();
 	static void register_editor_settings();
 	static bool handle_cmdline();
 
