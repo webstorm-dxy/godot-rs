@@ -559,18 +559,19 @@ static const RustCompletionSnippet rust_completion_snippets[] = {
 	{ nullptr, nullptr, ScriptLanguage::CODE_COMPLETION_KIND_PLAIN_TEXT },
 };
 
-// The editor paints every completion whose text starts with '#' as a comment (a
-// GDScript convention: its snippets insert '##' doc comments). A Rust attribute is
-// not a comment, and the comment colour is unreadable on dark themes, so those
-// entries ask for the regular editor font colour instead.
+// Every completion carries the editor's regular font colour: without it the popup
+// colours entries from settings that are not guaranteed to be readable - it paints
+// any text starting with '#' with the comment colour (a GDScript convention for its
+// '##' doc-comment snippets), which turns Rust attributes such as "#[export]" into
+// unreadable entries on dark themes, and a theme whose completion font colour is
+// dark makes every entry unreadable. The editor theme's font colour is readable by
+// definition, in dark and light themes alike.
 static void _push_completion_option(List<ScriptLanguage::CodeCompletionOption> *r_options, const String &p_display, const String &p_insert, ScriptLanguage::CodeCompletionKind p_kind) {
 	const String insert = p_insert.is_empty() ? p_display : p_insert;
 	ScriptLanguage::CodeCompletionOption option(insert, p_kind, ScriptLanguage::LOCATION_OTHER, p_display);
 	option.display = p_display;
 	option.insert_text = insert;
-	if (insert.begins_with("#")) {
-		option.theme_color_name = "font_color";
-	}
+	option.theme_color_name = "font_color";
 	r_options->push_back(option);
 }
 
