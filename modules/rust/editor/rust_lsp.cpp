@@ -257,8 +257,31 @@ void RustLsp::_handle_message(const Dictionary &p_message) {
 	RustDiagnostics::get_singleton()->set_file_diagnostics(path, parsed);
 }
 
+// The pipe delivers arbitrary byte runs, so lines are only decoded once they are
+// complete: a UTF-8 character split across two reads would be logged as a Unicode
+// parsing error and replaced with U+FFFD.
+static void _append_complete_lines(Vector<uint8_t> &r_pending, Vector<String> &r_lines) {
+	while (true) {
+		int newline = -1;
+		for (int i = 0; i < r_pending.size(); i++) {
+			if (r_pending[i] == '\n') {
+				newline = i;
+				break;
+			}
+		}
+		if (newline < 0) {
+			return;
+		}
+		r_lines.push_back(String::utf8((const char *)r_pending.ptr(), newline));
+		r_pending = r_pending.slice(newline + 1);
+	}
+}
+
 void RustLsp::_read_loop() {
-	String buffer;
+	// Frames are cut by byte length (Content-Length counts bytes, and the JSON body
+	// can contain multi-byte characters such as emoji in rust-analyzer's docs).
+	Vector<uint8_t> buffer;
+	Vector<uint8_t> stderr_pending;
 	uint8_t chunk[4096];
 
 	while (true) {
@@ -280,8 +303,13 @@ void RustLsp::_read_loop() {
 				uint8_t err_chunk[1024];
 				err_read = stderr_pipe->get_buffer(err_chunk, sizeof(err_chunk));
 				if (err_read > 0) {
+					const int stderr_old = stderr_pending.size();
+					stderr_pending.resize(stderr_old + (int)err_read);
+					memcpy(stderr_pending.ptrw() + stderr_old, err_chunk, (size_t)err_read);
 					// Keep the last lines around: they explain why the server died.
-					analyzer_stderr.append_array(String::utf8((const char *)err_chunk, (int)err_read).split("\n", false));
+					Vector<String> stderr_lines;
+					_append_complete_lines(stderr_pending, stderr_lines);
+					analyzer_stderr.append_array(stderr_lines);
 					while (analyzer_stderr.size() > 20) {
 						analyzer_stderr.remove_at(0);
 					}
@@ -306,7 +334,12 @@ void RustLsp::_read_loop() {
 						if (stderr_pipe.is_valid()) {
 							tail_err = stderr_pipe->get_buffer(tail, sizeof(tail));
 							if (tail_err > 0) {
-								analyzer_stderr.append_array(String::utf8((const char *)tail, (int)tail_err).split("\n", false));
+								const int tail_old = stderr_pending.size();
+								stderr_pending.resize(tail_old + (int)tail_err);
+								memcpy(stderr_pending.ptrw() + tail_old, tail, (size_t)tail_err);
+								Vector<String> tail_lines;
+								_append_complete_lines(stderr_pending, tail_lines);
+								analyzer_stderr.append_array(tail_lines);
 							}
 						}
 					}
@@ -323,26 +356,37 @@ void RustLsp::_read_loop() {
 			OS::get_singleton()->delay_usec(2000);
 			continue;
 		}
-		buffer += String::utf8((const char *)chunk, (int)read);
+		if (read > 0) {
+			const int buffer_old = buffer.size();
+			buffer.resize(buffer_old + (int)read);
+			memcpy(buffer.ptrw() + buffer_old, chunk, (size_t)read);
+		}
 
 		while (true) {
-			const int header_end = buffer.find("\r\n\r\n");
-			if (header_end == -1) {
+			int header_end = -1;
+			for (int i = 0; i + 3 < buffer.size(); i++) {
+				if (buffer[i] == '\r' && buffer[i + 1] == '\n' && buffer[i + 2] == '\r' && buffer[i + 3] == '\n') {
+					header_end = i;
+					break;
+				}
+			}
+			if (header_end < 0) {
 				break;
 			}
-			const String header = buffer.substr(0, header_end);
+			const String header = String::utf8((const char *)buffer.ptr(), header_end);
 			int length = -1;
 			for (const String &line : header.split("\r\n")) {
 				if (line.begins_with("Content-Length:")) {
 					length = line.substr(15).strip_edges().to_int();
 				}
 			}
-			if (length < 0 || (int)buffer.length() < header_end + 4 + length) {
+			const int body_start = header_end + 4;
+			if (length < 0 || buffer.size() < body_start + length) {
 				break;
 			}
 
-			const String body = buffer.substr(header_end + 4, length);
-			buffer = buffer.substr(header_end + 4 + length);
+			const String body = String::utf8((const char *)buffer.ptr() + body_start, length);
+			buffer = buffer.slice(body_start + length);
 
 			JSON json;
 			if (json.parse(body) == OK && json.get_data().get_type() == Variant::DICTIONARY) {

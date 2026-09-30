@@ -243,7 +243,7 @@ void RustBuild::_handle_json_message(const String &p_line) {
 	}
 }
 
-bool RustBuild::_pump_pipe(Ref<FileAccess> p_pipe, String &r_partial, bool p_stdout) {
+bool RustBuild::_pump_pipe(Ref<FileAccess> p_pipe, Vector<uint8_t> &r_partial, bool p_stdout) {
 	if (p_pipe.is_null()) {
 		return false;
 	}
@@ -252,12 +252,26 @@ bool RustBuild::_pump_pipe(Ref<FileAccess> p_pipe, String &r_partial, bool p_std
 	if (read == 0) {
 		return false;
 	}
-	r_partial += String::utf8((const char *)buffer, (int)read);
+	const int old_size = r_partial.size();
+	r_partial.resize(old_size + (int)read);
+	memcpy(r_partial.ptrw() + old_size, buffer, (size_t)read);
 
-	int newline = r_partial.find_char('\n');
-	while (newline != -1) {
-		String line = r_partial.substr(0, newline).strip_edges();
-		r_partial = r_partial.substr(newline + 1);
+	// Lines are cut out of the raw bytes: a read stops wherever the pipe decides, and
+	// decoding a UTF-8 character split across two reads turns it into U+FFFD and logs
+	// "Unicode parsing error".
+	while (true) {
+		int newline = -1;
+		for (int i = 0; i < r_partial.size(); i++) {
+			if (r_partial[i] == '\n') {
+				newline = i;
+				break;
+			}
+		}
+		if (newline < 0) {
+			break;
+		}
+		const String line = String::utf8((const char *)r_partial.ptr(), newline).strip_edges();
+		r_partial = r_partial.slice(newline + 1);
 		if (!line.is_empty()) {
 			if (p_stdout) {
 				_handle_json_message(line);
@@ -266,7 +280,6 @@ bool RustBuild::_pump_pipe(Ref<FileAccess> p_pipe, String &r_partial, bool p_std
 				_append_output(line);
 			}
 		}
-		newline = r_partial.find_char('\n');
 	}
 	return true;
 }
@@ -354,8 +367,8 @@ void RustBuild::_run(const String &p_profile) {
 		child_pid = pid;
 	}
 
-	String stdout_partial;
-	String stderr_partial;
+	Vector<uint8_t> stdout_partial;
+	Vector<uint8_t> stderr_partial;
 	while (true) {
 		bool got = _pump_pipe(stdio, stdout_partial, true);
 		got = _pump_pipe(stderr_pipe, stderr_partial, false) || got;

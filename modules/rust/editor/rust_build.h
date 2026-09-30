@@ -49,7 +49,7 @@ private:
 	static void _thread_func(void *p_userdata);
 	void _run(const String &p_profile);
 	void _append_output(const String &p_line);
-	bool _pump_pipe(Ref<FileAccess> p_pipe, String &r_partial, bool p_stdout);
+	bool _pump_pipe(Ref<FileAccess> p_pipe, Vector<uint8_t> &r_partial, bool p_stdout);
 	void _handle_json_message(const String &p_line);
 	String _to_res_path(const String &p_global_path) const;
 	String _find_cargo() const;
