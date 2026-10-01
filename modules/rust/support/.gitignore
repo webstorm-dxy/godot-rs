@@ -1,0 +1,5 @@
+# Cargo build output and lockfiles for the in-tree support crates. They are
+# consumed as path dependencies by user projects, which generate their own
+# Cargo.lock; godot-rust ignores both for the same reason (vendor/gdext).
+target/
+Cargo.lock
